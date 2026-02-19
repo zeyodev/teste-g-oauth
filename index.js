@@ -1,6 +1,6 @@
-const express = require('express');
-require('dotenv').config();
-const GoogleAuth = require('./googleAuth');
+import express from 'express';
+import "dotenv/config";
+import GoogleAuth from './services/google/index.js';
 
 const app = express();
 

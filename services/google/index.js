@@ -1,8 +1,8 @@
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const session = require('express-session');
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
+import session from 'express-session';
 
-class GoogleAuth {
+export default class GoogleAuth {
   constructor(app) {
     this.app = app;
     
@@ -113,5 +113,3 @@ class GoogleAuth {
     });
   }
 }
-
-module.exports = GoogleAuth;
