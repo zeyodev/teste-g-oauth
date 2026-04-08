@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import passport from 'passport';
 import { Strategy as FacebookStrategy } from 'passport-facebook';
 
@@ -35,17 +36,39 @@ export default class MetaAuth {
   }
 
   /**
+   * Decodifica e valida o signed_request do Meta (HMAC-SHA256)
+   */
+  parseSignedRequest(signedRequest) {
+    const [encodedSig, payload] = signedRequest.split('.', 2);
+    if (!encodedSig || !payload) return null;
+
+    const sig = Buffer.from(encodedSig.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const expectedSig = crypto.createHmac('sha256', this.clientSecret).update(payload).digest();
+
+    if (!crypto.timingSafeEqual(sig, expectedSig)) return null;
+
+    const data = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    if (data.algorithm?.toUpperCase() !== 'HMAC-SHA256') return null;
+
+    return data;
+  }
+
+  /**
    * Define as rotas de autenticação Meta
    */
   configureRoutes() {
-    // Rota de início da autenticação
-    // TODO: aqui não tem que usar scopes mas sim config_id
-    this.app.get('/auth/meta',
-      passport.authenticate('facebook', {
-        config_id: 794947280335543,
-        authType: 'rerequest'
-      })
-    );
+    // Rota de início da autenticação — redirecionamento manual para o dialog do Meta
+    this.app.get('/auth/meta', (req, res) => {
+      const params = new URLSearchParams({
+        auth_type: 'rerequest',
+        response_type: 'code',
+        redirect_uri: this.callbackUrl,
+        client_id: this.clientId,
+        config_id: '794947280335543',
+      });
+
+      res.redirect(`https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`);
+    });
 
     // Rota de Callback
     this.app.get('/auth/meta/callback',
@@ -73,6 +96,47 @@ export default class MetaAuth {
         res.send(script);
       }
     );
+
+    // Data Deletion Callback (exigido pelo Meta)
+    // https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback
+    this.app.post('/auth/meta/data-deletion', (req, res) => {
+      const signedRequest = req.body.signed_request;
+      if (!signedRequest) {
+        return res.status(400).json({ error: 'signed_request é obrigatório.' });
+      }
+
+      const data = this.parseSignedRequest(signedRequest);
+      if (!data) {
+        return res.status(403).json({ error: 'Assinatura inválida.' });
+      }
+
+      const userId = data.user_id;
+      const confirmationCode = crypto.randomUUID();
+      const statusUrl = `https://oauth.metaorg.app/auth/meta/deletion-status?code=${confirmationCode}`;
+
+      // TODO: implementar exclusão real dos dados do usuário no MongoDB
+      // e persistir o confirmationCode para consulta de status
+
+      res.json({
+        url: statusUrl,
+        confirmation_code: confirmationCode,
+      });
+    });
+
+    // Página de status da exclusão de dados
+    this.app.get('/auth/meta/deletion-status', (req, res) => {
+      const { code } = req.query;
+      if (!code) {
+        return res.status(400).send('Código de confirmação não informado.');
+      }
+
+      // TODO: consultar status real da exclusão no banco
+      res.send(`
+        <h1>Status da Exclusão de Dados</h1>
+        <p>Código de confirmação: <strong>${code}</strong></p>
+        <p>Seus dados foram marcados para exclusão.</p>
+      `);
+    });
 
     // Endpoint de troca manual de code por access_token
     this.app.post('/exchange-token', async (req, res) => {
