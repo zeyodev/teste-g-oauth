@@ -10,13 +10,18 @@ export default class GoogleAuth {
     this.port = process.env.PORT || 5000;
     this.clientId = process.env.GOOGLE_CLIENT_ID || 'COLOQUE_SEU_CLIENT_ID_AQUI';
     this.clientSecret = process.env.GOOGLE_CLIENT_SECRET || 'COLOQUE_SEU_CLIENT_SECRET_AQUI';
-    this.callbackUrl = `http://localhost:${this.port}/auth/google/callback`;
+    this.callbackUrl = `https://oauth.metaorg.app/auth/google/callback`;
     
     this.scopes = [
       'profile',
       'email',
       'https://www.googleapis.com/auth/calendar.events',
-      'https://www.googleapis.com/auth/meetings.space.created'
+      'https://www.googleapis.com/auth/meetings.space.created',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/analytics.readonly'
     ];
 
     // Inicializa tudo na ordem correta

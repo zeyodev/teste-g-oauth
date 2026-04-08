@@ -5,10 +5,9 @@ export default class MetaAuth {
   constructor(app) {
     this.app = app;
 
-    this.port = process.env.PORT || 5000;
     this.clientId = process.env.META_APP_ID;
     this.clientSecret = process.env.META_APP_SECRET;
-    this.callbackUrl = `http://localhost:${this.port}/auth/meta/callback`;
+    this.callbackUrl = `https://oauth.metaorg.app/auth/meta/callback`;
     this.redirectUri = process.env.META_REDIRECT_URI || this.callbackUrl;
 
     this.scopes = ['ads_read', 'read_insights', 'business_management'];
@@ -40,6 +39,7 @@ export default class MetaAuth {
    */
   configureRoutes() {
     // Rota de início da autenticação
+    // TODO: aqui não tem que usar scopes mas sim config_id
     this.app.get('/auth/meta',
       passport.authenticate('facebook', {
         scope: this.scopes,
