@@ -42,7 +42,7 @@ export default class MetaAuth {
     // TODO: aqui não tem que usar scopes mas sim config_id
     this.app.get('/auth/meta',
       passport.authenticate('facebook', {
-        scope: this.scopes,
+        config_id: 794947280335543,
         authType: 'rerequest'
       })
     );
