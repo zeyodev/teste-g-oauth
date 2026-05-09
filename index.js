@@ -2,6 +2,7 @@ import express from 'express';
 import "dotenv/config";
 import GoogleAuth from './services/google/index.js';
 import MetaAuth from './services/meta/index.js';
+import CanvaAuth from './services/canva/index.js';
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use(express.json());
 // Ela configurará automaticamente as sessões, passport e rotas.
 new GoogleAuth(app);
 new MetaAuth(app);
+new CanvaAuth(app);
 
 // -----------------------------------------------------------------------------
 // INICIALIZAÇÃO DO SERVIDOR
