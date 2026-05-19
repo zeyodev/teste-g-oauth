@@ -1,0 +1,60 @@
+{
+  "name": "google",
+  "displayName": "Google",
+  "icon": "google.svg",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+  "token_url": "https://oauth2.googleapis.com/token",
+  "revoke_url": "https://oauth2.googleapis.com/revoke",
+  "profile_url": "https://www.googleapis.com/oauth2/v3/userinfo",
+  "profile_map": { "externalId": "sub", "email": "email", "name": "name", "picture": "picture" },
+  "pkce": false,
+  "client_id_env": "GOOGLE_CLIENT_ID",
+  "client_secret_env": "GOOGLE_CLIENT_SECRET",
+  "authorize_extra": {
+    "access_type": "offline",
+    "prompt": "consent",
+    "include_granted_scopes": "true"
+  },
+  "packs": {
+    "meetings": {
+      "label": "Google Meet + Calendar",
+      "description": "Criar eventos no Calendar e gerar links do Meet.",
+      "scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/meetings.space.created"
+      ]
+    },
+    "vendas": {
+      "label": "Gmail + Spreadsheets",
+      "description": "Ler/enviar Gmail e ler/escrever em Spreadsheets.",
+      "scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/spreadsheets"
+      ]
+    },
+    "full": {
+      "label": "Workspace completo",
+      "description": "Google Drive + Calendar + Gmail + Spreadsheets + Analytics.",
+      "scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/analytics.readonly"
+      ]
+    }
+  },
+  "extensions": []
+}

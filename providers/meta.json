@@ -1,0 +1,39 @@
+{
+  "name": "meta",
+  "displayName": "Meta (Facebook/Instagram)",
+  "icon": "meta.svg",
+  "authorize_url": "https://www.facebook.com/v23.0/dialog/oauth",
+  "token_url": "https://graph.facebook.com/v23.0/oauth/access_token",
+  "revoke_url": "https://graph.facebook.com/v23.0/me/permissions",
+  "revoke_method": "DELETE",
+  "profile_url": "https://graph.facebook.com/v23.0/me",
+  "profile_url_params": { "fields": "id,name,email" },
+  "profile_map": { "externalId": "id", "email": "email", "name": "name" },
+  "pkce": false,
+  "auth_token_in_header": false,
+  "client_id_env": "META_APP_ID",
+  "client_secret_env": "META_APP_SECRET",
+  "authorize_extra": {
+    "auth_type": "rerequest",
+    "config_id": "794947280335543"
+  },
+  "packs": {
+    "ads": {
+      "label": "Meta Ads + Business",
+      "description": "Publicar e ler insights de Ads + gerir Business.",
+      "scopes": ["ads_read", "ads_management", "read_insights", "business_management"]
+    },
+    "pages": {
+      "label": "Pages + Instagram",
+      "description": "Postar em Pages do Facebook e contas Instagram conectadas.",
+      "scopes": [
+        "pages_show_list",
+        "pages_read_engagement",
+        "pages_manage_posts",
+        "instagram_basic",
+        "instagram_content_publish"
+      ]
+    }
+  },
+  "extensions": ["meta_signed_request"]
+}

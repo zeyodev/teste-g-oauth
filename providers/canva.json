@@ -1,0 +1,34 @@
+{
+  "name": "canva",
+  "displayName": "Canva",
+  "icon": "canva.svg",
+  "authorize_url": "https://www.canva.com/api/oauth/authorize",
+  "token_url": "https://api.canva.com/rest/v1/oauth/token",
+  "revoke_url": "https://api.canva.com/rest/v1/oauth/revoke",
+  "revoke_method": "POST",
+  "revoke_body_kind": "form",
+  "revoke_body_extra": { "token_type_hint": "access_token" },
+  "profile_url": "https://api.canva.com/rest/v1/users/me",
+  "profile_map": { "externalId": "team_user.user_id", "name": "team_user.user_id" },
+  "pkce": true,
+  "token_auth_kind": "basic",
+  "client_id_env": "CANVA_CLIENT_ID",
+  "client_secret_env": "CANVA_CLIENT_SECRET",
+  "packs": {
+    "design": {
+      "label": "Designs + Assets",
+      "description": "Ler perfil, designs e brand templates; ler/escrever assets.",
+      "scopes": [
+        "profile:read",
+        "asset:read",
+        "asset:write",
+        "design:meta:read",
+        "design:content:read",
+        "design:content:write",
+        "brandtemplate:meta:read",
+        "brandtemplate:content:read"
+      ]
+    }
+  },
+  "extensions": []
+}
