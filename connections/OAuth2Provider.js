@@ -38,6 +38,15 @@ export default class OAuth2Provider {
     this.clientSecret = env[config.client_secret_env];
     this.publicBaseUrl = publicBaseUrl;
     this.callbackUrl = `${publicBaseUrl}/auth/${this.name}/callback`;
+    // Params extras do authorize: `authorize_extra` são estáticos no JSON;
+    // `authorize_extra_env` mapeia param→NOME_DA_ENV (mesmo padrão *_env do
+    // client id/secret — mantém id/segredo fora do repo). Env ausente = param
+    // omitido (ex: Meta sem config_id cai no login clássico por scope).
+    this.authorizeExtra = { ...(config.authorize_extra || {}) };
+    for (const [param, envName] of Object.entries(config.authorize_extra_env || {})) {
+      const v = env[envName];
+      if (v) this.authorizeExtra[param] = v;
+    }
   }
 
   get enabled() {
@@ -56,7 +65,7 @@ export default class OAuth2Provider {
       scope: (scopes || []).join(" "),
       state,
     });
-    for (const [k, v] of Object.entries(this.config.authorize_extra || {})) params.set(k, v);
+    for (const [k, v] of Object.entries(this.authorizeExtra)) params.set(k, v);
     for (const [k, v] of Object.entries(extra)) params.set(k, v);
     if (codeChallenge) {
       params.set("code_challenge", codeChallenge);

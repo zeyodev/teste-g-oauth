@@ -16,8 +16,10 @@
   "client_id_env": "META_APP_ID",
   "client_secret_env": "META_APP_SECRET",
   "authorize_extra": {
-    "auth_type": "rerequest",
-    "config_id": "794947280335543"
+    "auth_type": "rerequest"
+  },
+  "authorize_extra_env": {
+    "config_id": "META_APP_CONFIG"
   },
   "packs": {
     "ads": {
