@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zkeys — suas integrações</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  /* Tokens da landing (identidade visual metaorg) */
+  :root {
+    --bg: #050605;
+    --fg: #f2f2ef;
+    --muted: #9a9a92;
+    --accent: #c1ff72;
+    --card: #0d0f0c;
+    --border: #22251f;
+    --danger: #ff7272;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: 'DM Sans', system-ui, sans-serif; font-size: 15px;
+    min-height: 100vh;
+  }
+  h1, h2 { font-family: 'Instrument Serif', serif; font-weight: 400; }
+  h1 { font-size: 2.2rem; margin: 0; }
+  h1 em { color: var(--accent); font-style: italic; }
+  h2 { font-size: 1.4rem; margin: 0 0 12px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 40px 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; margin-top: 24px;
+  }
+  label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 4px; }
+  input, select {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #101210; color: var(--fg);
+    font: inherit;
+  }
+  button {
+    font: inherit; font-weight: 500; cursor: pointer; border: none;
+    border-radius: 8px; padding: 10px 18px; margin-top: 16px;
+    background: var(--accent); color: #0a0c08;
+  }
+  button.ghost {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); padding: 6px 12px; margin: 0;
+  }
+  button.ghost:hover { color: var(--fg); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 2px 8px;
+    border-radius: 99px; background: rgba(193,255,114,.12); color: var(--accent);
+  }
+  .row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 1em; }
+  header { display: flex; justify-content: space-between; align-items: center; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>z<em>keys</em></h1>
+    <div id="who" class="muted" hidden>
+      <span id="who-email"></span>
+      <button class="ghost" id="btn-logout">sair</button>
+    </div>
+  </header>
+
+  <!-- Login -->
+  <div class="card" id="view-login" hidden>
+    <h2>Entrar</h2>
+    <form id="form-login">
+      <label>email</label>
+      <input name="email" type="email" required autocomplete="username">
+      <label>senha</label>
+      <input name="password" type="password" required autocomplete="current-password">
+      <button type="submit">Entrar</button>
+      <div class="err" id="login-err"></div>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="view-app" hidden>
+    <div class="card">
+      <h2>Conectar plataforma</h2>
+      <div class="row">
+        <div>
+          <label>plataforma</label>
+          <select id="sel-provider"></select>
+        </div>
+        <div>
+          <label>escopo (pack)</label>
+          <select id="sel-pack"></select>
+        </div>
+        <div style="flex:0">
+          <button id="btn-connect">Conectar</button>
+        </div>
+      </div>
+      <p class="muted" id="pack-desc"></p>
+    </div>
+
+    <div class="card">
+      <h2>Suas credenciais</h2>
+      <table>
+        <thead><tr><th>plataforma</th><th>conta</th><th>expira</th><th></th><th></th></tr></thead>
+        <tbody id="tbl-conns"></tbody>
+      </table>
+      <p class="muted" id="conns-empty" hidden>Nenhuma credencial ainda — conecte uma plataforma acima.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, {
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    ...opts,
+  });
+  if (res.status === 401) { show("login"); throw new Error("não autenticado"); }
+  return res;
+};
+
+let providers = [];
+
+function show(view) {
+  $("view-login").hidden = view !== "login";
+  $("view-app").hidden = view !== "app";
+  $("who").hidden = view !== "app";
+}
+
+async function boot() {
+  const res = await fetch("/auth/me", { credentials: "same-origin" });
+  if (!res.ok) return show("login");
+  const me = await res.json();
+  $("who-email").textContent = me.email;
+  show("app");
+  await Promise.all([loadProviders(), loadConnections()]);
+}
+
+async function loadProviders() {
+  providers = await (await api("/providers")).json();
+  const sel = $("sel-provider");
+  sel.innerHTML = providers.map(p => `<option value="${p.name}">${p.displayName}</option>`).join("");
+  sel.onchange = renderPacks;
+  renderPacks();
+}
+
+function renderPacks() {
+  const p = providers.find(x => x.name === $("sel-provider").value);
+  const sel = $("sel-pack");
+  sel.innerHTML = (p?.packs || []).map(k => `<option value="${k.id}">${k.label || k.id}</option>`).join("");
+  sel.onchange = () => {
+    const pk = p?.packs.find(k => k.id === sel.value);
+    $("pack-desc").textContent = pk?.description || "";
+  };
+  sel.onchange();
+}
+
+async function loadConnections() {
+  const conns = await (await api("/connections")).json();
+  $("conns-empty").hidden = conns.length > 0;
+  $("tbl-conns").innerHTML = conns.map(c => `
+    <tr>
+      <td>${c.provider}</td>
+      <td>${c.alias || c.email || c.account_key}</td>
+      <td class="muted">${c.expires_at ? new Date(c.expires_at).toLocaleString("pt-BR") : "—"}</td>
+      <td>${c.is_default ? '<span class="badge">padrão</span>'
+            : `<button class="ghost" data-act="default" data-id="${c.id}">tornar padrão</button>`}</td>
+      <td><button class="ghost danger" data-act="remove" data-id="${c.id}">remover</button></td>
+    </tr>`).join("");
+}
+
+$("tbl-conns").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  if (btn.dataset.act === "default") {
+    await api(`/connections/${btn.dataset.id}/default`, { method: "POST" });
+  } else if (btn.dataset.act === "remove") {
+    if (!confirm("Remover esta credencial? O acesso no provider será revogado.")) return;
+    await api(`/connections/${btn.dataset.id}`, { method: "DELETE" });
+  }
+  loadConnections();
+});
+
+$("form-login").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("login-err").textContent = "";
+  const fd = new FormData(ev.target);
+  const res = await fetch("/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
+  });
+  if (!res.ok) {
+    $("login-err").textContent = (await res.json()).error || "erro no login";
+    return;
+  }
+  boot();
+});
+
+$("btn-logout").addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+  show("login");
+});
+
+$("btn-connect").addEventListener("click", () => {
+  const provider = $("sel-provider").value;
+  const pack = $("sel-pack").value;
+  if (!provider) return;
+  window.open(`/auth/${provider}/start?pack=${encodeURIComponent(pack)}`,
+    "zkeys-oauth", "width=560,height=720");
+});
+
+// Popup fechou → refetch no focus da página-mãe.
+window.addEventListener("focus", () => {
+  if (!$("view-app").hidden) loadConnections();
+});
+
+boot();
+</script>
+</body>
+</html>

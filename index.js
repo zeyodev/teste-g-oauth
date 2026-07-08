@@ -1,49 +1,66 @@
-// oauth.metaorg.app — proxy puro de providers OAuth (config-driven).
-// DESIGN-oauth-credentials.md §2.6: cada provider vive em providers/*.json;
-// a classe genérica OAuth2Provider gera as rotas (start/callback/refresh/revoke).
-// Adicionar provider novo = JSON novo + env vars; zero refactor de código aqui.
+// zkeys — cofre de credenciais multi-tenant + proxy de integrações.
+// Ver DESIGN-zkeys.md (raiz do metaorg). F1: login + conectar + cofre.
+//
+// Composition root (DIP, §5): carrega config, constrói as dependências
+// (store, crypto, passwords, sessions, registry de providers) e as injeta
+// nas rotas. Nenhum outro módulo lê env ou abre banco.
 
 import express from "express";
-import "dotenv/config";
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import OAuth2Provider from "./lib/OAuth2Provider.js";
+import { loadConfig } from "./config.js";
+import { createStore } from "./lib/store.js";
+import { createCrypto } from "./lib/crypto.js";
+import { createPasswords } from "./lib/passwords.js";
+import { createSessions } from "./lib/session.js";
+import { loadProviders, HOOKS } from "./connections/registry.js";
+import { createAuthRoutes } from "./auth/routes.js";
+import { createConnectionRoutes } from "./connections/routes.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+export function createApp(config) {
+  const store = createStore(config.dbPath);
+  const cryptoBox = createCrypto(config.masterKey);
+  const passwords = createPasswords(config.pepper);
+  const sessions = createSessions({
+    secret: config.sessionSecret,
+    ttlSeconds: config.sessionTtlSeconds,
+    secure: config.secureCookies,
+  });
+  const registry = loadProviders({
+    providersDir: config.providersDir,
+    publicBaseUrl: config.publicBaseUrl,
+  });
 
-const PORT = process.env.PORT || 5000;
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
-// Health
-app.get("/healthz", (_req, res) => res.json({ ok: true }));
+  app.get("/healthz", (_req, res) => res.json({ ok: true, providers: [...registry.keys()] }));
 
-// Carrega todos os providers em providers/*.json
-const providersDir = path.join(__dirname, "providers");
-const installed = [];
-if (fs.existsSync(providersDir)) {
-  for (const file of fs.readdirSync(providersDir).sort()) {
-    if (!file.endsWith(".json")) continue;
-    try {
-      const cfg = JSON.parse(fs.readFileSync(path.join(providersDir, file), "utf8"));
-      const provider = new OAuth2Provider(cfg);
-      provider.install(app);
-      installed.push(provider.name);
-    } catch (err) {
-      console.error(`[oauth] falha ao carregar ${file}:`, err.message);
-    }
-  }
+  app.use(createAuthRoutes({ store, passwords, sessions }));
+  app.use(createConnectionRoutes({
+    store, cryptoBox, registry, sessions,
+    stateTtlSeconds: config.stateTtlSeconds,
+  }));
+
+  // Hooks por-provider que instalam rotas próprias (ex: data-deletion do Meta).
+  for (const provider of registry.values()) provider.installExtensions(app, HOOKS);
+
+  // UI mínima (F1). F4 evolui.
+  app.use("/", express.static(path.join(ROOT, "web")));
+
+  return { app, store, registry };
 }
 
-// Listagem dos providers carregados (debug / discovery)
-app.get("/providers", (_req, res) => {
-  res.json({ installed });
-});
-
-app.listen(PORT, () => {
-  console.log(`[oauth] Servidor em http://localhost:${PORT} — providers: ${installed.join(", ") || "(nenhum)"}`);
-});
+// Boot direto (testes importam createApp e sobem com config próprio).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const config = loadConfig();
+  const { app, registry } = createApp(config);
+  app.listen(config.port, () => {
+    console.log(
+      `[zkeys] http://localhost:${config.port} — providers: ${[...registry.keys()].join(", ") || "(nenhum habilitado)"}`
+    );
+  });
+}

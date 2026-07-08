@@ -1,6 +1,7 @@
 // Meta data-deletion callback (signed_request com HMAC-SHA256).
 // https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback
 //
+// Hook por-provider (DESIGN-zkeys §6): instalado via config.extensions.
 // Não toca o flow normal — só adiciona o endpoint /auth/meta/data-deletion
 // e a página de status. Mantemos o comportamento que existia no MetaAuth
 // original.
