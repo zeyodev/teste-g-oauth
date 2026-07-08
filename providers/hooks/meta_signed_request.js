@@ -8,6 +8,16 @@
 
 import crypto from "crypto";
 
+// appsecret_proof (DESIGN-zkeys §6): HMAC-SHA256 do access_token usando o app
+// secret como CHAVE, em hex. Meta pode exigir esse param junto do access_token
+// nas chamadas Graph. Primitiva exportada pro sign hook do proxy (forward.js) —
+// mesma máquina de HMAC usada abaixo pra validar o signed_request do
+// data-deletion. É o par auth_injection+sign que mantém a exceção do Meta num
+// hook fino (OCP), sem if(provider==='meta') no núcleo do proxy.
+export function appsecretProof(appSecret, accessToken) {
+  return crypto.createHmac("sha256", appSecret).update(String(accessToken)).digest("hex");
+}
+
 function parseSignedRequest(signedRequest, clientSecret) {
   const [encodedSig, payload] = signedRequest.split(".", 2);
   if (!encodedSig || !payload) return null;

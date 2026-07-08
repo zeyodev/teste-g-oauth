@@ -7,6 +7,7 @@
 // 401, repassa cru — a conexão precisa de re-OAuth. Token nunca em log.
 
 import { Readable } from "node:stream";
+import { appsecretProof } from "../providers/hooks/meta_signed_request.js";
 
 // Headers que NUNCA atravessam pro upstream: hop-by-hop (RFC 9110 §7.6.1),
 // o que o fetch recalcula, e os internos do zkeys.
@@ -58,6 +59,16 @@ const INJECTIONS = {
   },
 };
 
+// Assinaturas por-provider (§6, OCP): provider.config.sign nomeia qual — a
+// exceção do Meta vive aqui num hook fino, não em if(provider===...). Cada
+// signer devolve params extras de query e recebe o token EFETIVO da tentativa,
+// então é recomputado a cada attempt (o retry-on-401 refaz com o token novo).
+const SIGNERS = {
+  appsecret_proof({ token, secret }) {
+    return `appsecret_proof=${appsecretProof(secret, token)}`;
+  },
+};
+
 export function createForward({ cryptoBox, refreshConnection }) {
   return async function forward(req, res) {
     const { provider, connection } = req.zkeys;
@@ -69,6 +80,11 @@ export function createForward({ cryptoBox, refreshConnection }) {
     const inject = INJECTIONS[injection.kind];
     if (!inject) {
       return res.status(502).json({ error: `auth_injection desconhecida: ${injection.kind}` });
+    }
+    // Sign hook opcional (§6): validado aqui, aplicado dentro do attempt.
+    const sign = cfg.sign ? SIGNERS[cfg.sign] : null;
+    if (cfg.sign && !sign) {
+      return res.status(502).json({ error: `sign desconhecido: ${cfg.sign}` });
     }
 
     const { restPath, rawQuery } = splitProxyUrl(req.originalUrl);
@@ -88,9 +104,15 @@ export function createForward({ cryptoBox, refreshConnection }) {
         headers.set(k, Array.isArray(v) ? v.join(", ") : String(v));
       }
       const extraQuery = inject({ headers, token, injection });
-      const query = extraQuery
+      let query = extraQuery
         ? (baseQuery ? `${baseQuery}&${extraQuery}` : extraQuery)
         : baseQuery;
+      // Sign DEPOIS da injeção (§6): o proof é sobre o token EFETIVO desta
+      // tentativa — no retry pós-refresh, `token` já é o novo e o proof muda.
+      if (sign) {
+        const signQuery = sign({ token, secret: provider.clientSecret });
+        query = query ? `${query}&${signQuery}` : signQuery;
+      }
       const url =
         cfg.api_base_url.replace(/\/+$/, "") + restPath + (query ? `?${query}` : "");
       // redirect manual: 3xx do upstream atravessa cru (proxy transparente).

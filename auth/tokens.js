@@ -3,8 +3,8 @@
 // sha-256. Factory (§5): a política do token (formato, entropia, escopo)
 // vive aqui, num lugar só.
 //
-// F2 traz só a emissão mínima (o proxy precisa de um token pra autenticar);
-// lista/revogação/UI completam na F3.
+// F2 trouxe só a emissão mínima (o proxy precisa de um token pra autenticar);
+// F3 completa o ciclo: lista (sem o segredo) + revogação. UI em web/.
 
 import crypto from "crypto";
 import express from "express";
@@ -12,6 +12,30 @@ import { hashToken } from "../lib/crypto.js";
 
 export function createWorkspaceTokenRoutes({ store, sessions }) {
   const router = express.Router();
+
+  // Lista os tokens do usuário: nome/escopos/criado/último uso/revogado.
+  // O store nunca devolve o token_hash (§7) — o segredo só existiu na emissão.
+  router.get("/auth/workspace-tokens", sessions.requireSession, (req, res) => {
+    const rows = store.workspaceTokens.listByUser(req.user.id).map((t) => ({
+      id: t.id,
+      name: t.name,
+      scopes: JSON.parse(t.scopes_json || "[]"),
+      created_at: t.created_at,
+      last_used_at: t.last_used_at,
+      revoked_at: t.revoked_at,
+    }));
+    res.json(rows);
+  });
+
+  // Revoga (seta revoked_at) sem tocar nas conexões. 404 se não for do usuário
+  // ou já revogado — o proxy passa a devolver 401 pra esse zwt_ na hora seguinte.
+  router.delete("/auth/workspace-tokens/:id", sessions.requireSession, (req, res) => {
+    if (!store.workspaceTokens.revoke(req.user.id, req.params.id)) {
+      return res.status(404).json({ error: "token não encontrado ou já revogado" });
+    }
+    store.audit("token.revoke", { userId: req.user.id, detail: req.params.id });
+    res.json({ ok: true });
+  });
 
   router.post("/auth/workspace-tokens", sessions.requireSession, (req, res) => {
     const { name, scopes } = req.body || {};

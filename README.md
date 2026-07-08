@@ -42,16 +42,37 @@ Pipeline (`proxy/`): authN (`zwt_` → hash → user) → authZ (provider ∈ es
 fresh (refresh se expirando) → forward (injeta auth conforme `auth_injection`
 do provider, streama a resposta crua; upstream 401 → refresh 1x → retry).
 
+## Workspace tokens + Meta (F3)
+
+Ciclo completo de `zwt_` (além da emissão da F2):
+
+```bash
+curl http://localhost:5000/auth/workspace-tokens -b "$COOKIE"          # lista (sem hash/segredo)
+curl -X DELETE http://localhost:5000/auth/workspace-tokens/<id> -b "$COOKIE"  # revoga → proxy passa a dar 401
+```
+
+Gestão pela UI em `/` (criar mostra o `zwt_` **uma vez**, listar, revogar).
+
+**`appsecret_proof` do Meta** (chamadas Graph): `providers/meta.json` declara
+`"sign": "appsecret_proof"`; o proxy injeta
+`appsecret_proof = hex(HMAC-SHA256(app_secret, access_token))` na query, **por
+tentativa** (o retry pós-refresh recalcula com o token novo). É um `SIGNER` em
+dados (gêmeo do `auth_injection`) — o núcleo do proxy não conhece "Meta".
+
+**Helper no harness** (`agente/harness/tools.py`): `zkeys_request(provider,
+path, method, body)` lê `ZKEYS_TOKEN`, monta `<base>/p/<provider>/<path>`,
+injeta o Bearer do `zwt_` e ecoa a URL alvo.
+
 ## Testes
 
 ```bash
-npm test    # e2e F1 (login → connect → cofre → revoke) + F2 (proxy com upstream mock)
+npm test    # F1 (login→connect→cofre→revoke) + F2 (proxy mock) + F3 (tokens + appsecret_proof)
 ```
 
 ## Estado (roadmap DESIGN-zkeys §13)
 
 - **F1 ✅** login + conectar + cofre cifrado + CRUD de credenciais + UI mínima
 - **F2 ✅** proxy transparente `/p/:provider/*` (refresh-on-401) + emissão mínima de `zwt_`
-- **F3** ciclo completo de workspace tokens (lista/revogação/UI) + hook `appsecret_proof` do Meta + helper `zkeys_request` no harness
+- **F3 ✅** ciclo completo de workspace tokens (lista/revogação/UI) + hook `appsecret_proof` do Meta + helper `zkeys_request` no harness
 - **F4** UI completa + rate limit + envelope encryption
 - **F5** retirada do fluxo brokered no agente

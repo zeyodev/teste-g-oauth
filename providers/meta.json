@@ -11,6 +11,7 @@
   "profile_map": { "externalId": "id", "email": "email", "name": "name" },
   "api_base_url": "https://graph.facebook.com/v23.0",
   "auth_injection": { "kind": "query", "param": "access_token" },
+  "sign": "appsecret_proof",
   "pkce": false,
   "auth_token_in_header": false,
   "client_id_env": "META_APP_ID",

@@ -116,6 +116,43 @@
       </table>
       <p class="muted" id="conns-empty" hidden>Nenhuma credencial ainda — conecte uma plataforma acima.</p>
     </div>
+
+    <div class="card">
+      <h2>Workspace tokens</h2>
+      <p class="muted">
+        O <code>zwt_…</code> é a chave que o agente do workspace usa pra falar com o proxy
+        (<code>Authorization: Bearer</code>). O token cru do provider nunca sai do zkeys.
+      </p>
+      <div class="row">
+        <div>
+          <label>nome</label>
+          <input id="tok-name" placeholder="workspace duoacademy">
+        </div>
+        <div>
+          <label>escopos (providers, vírgula — ou <code>*</code> pra todos)</label>
+          <input id="tok-scopes" placeholder="google, meta   ou   *">
+        </div>
+        <div style="flex:0">
+          <button id="btn-token">Gerar</button>
+        </div>
+      </div>
+      <div class="err" id="token-err"></div>
+
+      <!-- Revelado UMA vez logo após criar. -->
+      <div id="token-reveal" class="card" hidden style="margin-top:16px;border-color:var(--accent)">
+        <p class="muted">Copie agora — este segredo <strong>não será mostrado de novo</strong>.</p>
+        <div class="row">
+          <div><input id="token-secret" readonly onclick="this.select()"></div>
+          <div style="flex:0"><button class="ghost" id="btn-copy-token">copiar</button></div>
+        </div>
+      </div>
+
+      <table>
+        <thead><tr><th>nome</th><th>escopos</th><th>criado</th><th>último uso</th><th></th></tr></thead>
+        <tbody id="tbl-tokens"></tbody>
+      </table>
+      <p class="muted" id="tokens-empty" hidden>Nenhum token ainda — gere um acima e salve como secret ZKEYS_TOKEN no workspace.</p>
+    </div>
   </div>
 </div>
 
@@ -145,8 +182,10 @@ async function boot() {
   const me = await res.json();
   $("who-email").textContent = me.email;
   show("app");
-  await Promise.all([loadProviders(), loadConnections()]);
+  await Promise.all([loadProviders(), loadConnections(), loadTokens()]);
 }
+
+const fmtDate = (s) => (s ? new Date(s).toLocaleString("pt-BR") : "—");
 
 async function loadProviders() {
   providers = await (await api("/providers")).json();
@@ -191,6 +230,55 @@ $("tbl-conns").addEventListener("click", async (ev) => {
     await api(`/connections/${btn.dataset.id}`, { method: "DELETE" });
   }
   loadConnections();
+});
+
+// ── Workspace tokens (zwt_) ──────────────────────────────────────────────
+async function loadTokens() {
+  const toks = await (await api("/auth/workspace-tokens")).json();
+  $("tokens-empty").hidden = toks.length > 0;
+  $("tbl-tokens").innerHTML = toks.map(t => `
+    <tr${t.revoked_at ? ' style="opacity:.5"' : ""}>
+      <td>${t.name}</td>
+      <td class="muted">${(t.scopes || []).join(", ") || "—"}</td>
+      <td class="muted">${fmtDate(t.created_at)}</td>
+      <td class="muted">${fmtDate(t.last_used_at)}</td>
+      <td>${t.revoked_at
+            ? '<span class="muted">revogado</span>'
+            : `<button class="ghost danger" data-act="revoke" data-id="${t.id}">revogar</button>`}</td>
+    </tr>`).join("");
+}
+
+$("btn-token").addEventListener("click", async () => {
+  $("token-err").textContent = "";
+  const name = $("tok-name").value.trim();
+  const scopes = $("tok-scopes").value.split(",").map(s => s.trim()).filter(Boolean);
+  if (!name) { $("token-err").textContent = "informe um nome"; return; }
+  if (!scopes.length) { $("token-err").textContent = 'informe escopos, ex "google, meta" ou "*"'; return; }
+  const res = await api("/auth/workspace-tokens", { method: "POST", body: JSON.stringify({ name, scopes }) });
+  if (!res.ok) { $("token-err").textContent = (await res.json()).error || "erro ao gerar token"; return; }
+  const { token } = await res.json();
+  $("token-secret").value = token;
+  $("token-reveal").hidden = false;
+  $("tok-name").value = "";
+  $("tok-scopes").value = "";
+  loadTokens();
+});
+
+$("btn-copy-token").addEventListener("click", async () => {
+  const el = $("token-secret");
+  el.select();
+  try { await navigator.clipboard.writeText(el.value); } catch { document.execCommand("copy"); }
+  $("btn-copy-token").textContent = "copiado ✓";
+  setTimeout(() => ($("btn-copy-token").textContent = "copiar"), 1500);
+});
+
+$("tbl-tokens").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act='revoke']");
+  if (!btn) return;
+  if (!confirm("Revogar este token? O workspace que o usa deixa de acessar o proxy na hora.")) return;
+  await api(`/auth/workspace-tokens/${btn.dataset.id}`, { method: "DELETE" });
+  $("token-reveal").hidden = true;
+  loadTokens();
 });
 
 $("form-login").addEventListener("submit", async (ev) => {

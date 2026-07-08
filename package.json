@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node index.js",
     "create-user": "node scripts/create-user.js",
-    "test": "node test/smoke.e2e.mjs && node test/proxy.e2e.mjs",
-    "test:proxy": "node test/proxy.e2e.mjs"
+    "test": "node test/smoke.e2e.mjs && node test/proxy.e2e.mjs && node test/tokens.e2e.mjs",
+    "test:proxy": "node test/proxy.e2e.mjs",
+    "test:tokens": "node test/tokens.e2e.mjs"
   },
   "license": "UNLICENSED",
   "private": true,
