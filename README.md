@@ -21,16 +21,37 @@ npm start               # http://localhost:5000
 Dev em http: adicionar `ZKEYS_INSECURE_COOKIE=1` no `.env` (senão o cookie
 Secure não volta).
 
+## Proxy transparente (F2)
+
+O workspace nunca vê o token do provider — só um `zwt_…` escopado/revogável:
+
+```bash
+# 1. logado (cookie de sessão), emitir um workspace token — o segredo sai UMA vez
+curl -X POST http://localhost:5000/auth/workspace-tokens \
+  -H 'content-type: application/json' -b "$COOKIE" \
+  -d '{"name":"workspace acme","scopes":["google"]}'
+# → { "token": "zwt_…", ... }
+
+# 2. do workspace, falar com o provider ATRAVÉS do proxy
+curl http://localhost:5000/p/google/gmail/v1/users/me/messages \
+  -H "Authorization: Bearer zwt_…"
+```
+
+Pipeline (`proxy/`): authN (`zwt_` → hash → user) → authZ (provider ∈ escopo)
+→ resolve (connection default, ou `?account=<alias>` / `X-Zkeys-Account`) →
+fresh (refresh se expirando) → forward (injeta auth conforme `auth_injection`
+do provider, streama a resposta crua; upstream 401 → refresh 1x → retry).
+
 ## Testes
 
 ```bash
-npm test    # e2e com provider mock: login → connect (PKCE) → cofre → revoke
+npm test    # e2e F1 (login → connect → cofre → revoke) + F2 (proxy com upstream mock)
 ```
 
 ## Estado (roadmap DESIGN-zkeys §13)
 
 - **F1 ✅** login + conectar + cofre cifrado + CRUD de credenciais + UI mínima
-- **F2** proxy transparente `/p/:provider/*` (refresh-on-401)
-- **F3** workspace tokens (`zwt_…`) + hook `appsecret_proof` do Meta
+- **F2 ✅** proxy transparente `/p/:provider/*` (refresh-on-401) + emissão mínima de `zwt_`
+- **F3** ciclo completo de workspace tokens (lista/revogação/UI) + hook `appsecret_proof` do Meta + helper `zkeys_request` no harness
 - **F4** UI completa + rate limit + envelope encryption
 - **F5** retirada do fluxo brokered no agente

@@ -7,6 +7,8 @@
   "revoke_url": "https://oauth2.googleapis.com/revoke",
   "profile_url": "https://www.googleapis.com/oauth2/v3/userinfo",
   "profile_map": { "externalId": "sub", "email": "email", "name": "name", "picture": "picture" },
+  "api_base_url": "https://www.googleapis.com",
+  "auth_injection": { "kind": "bearer" },
   "pkce": false,
   "client_id_env": "GOOGLE_CLIENT_ID",
   "client_secret_env": "GOOGLE_CLIENT_SECRET",

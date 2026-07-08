@@ -1,5 +1,6 @@
 // zkeys — cofre de credenciais multi-tenant + proxy de integrações.
 // Ver DESIGN-zkeys.md (raiz do metaorg). F1: login + conectar + cofre.
+// F2: proxy transparente /p/:provider/* + emissão mínima de zwt_.
 //
 // Composition root (DIP, §5): carrega config, constrói as dependências
 // (store, crypto, passwords, sessions, registry de providers) e as injeta
@@ -15,7 +16,9 @@ import { createPasswords } from "./lib/passwords.js";
 import { createSessions } from "./lib/session.js";
 import { loadProviders, HOOKS } from "./connections/registry.js";
 import { createAuthRoutes } from "./auth/routes.js";
+import { createWorkspaceTokenRoutes } from "./auth/tokens.js";
 import { createConnectionRoutes } from "./connections/routes.js";
+import { createProxyRouter } from "./proxy/router.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,12 +37,16 @@ export function createApp(config) {
   });
 
   const app = express();
+  // Proxy ANTES dos body parsers (§6): /p/* repassa o body CRU pro upstream;
+  // express.json() consumiria o stream e quebraria o forward.
+  app.use(createProxyRouter({ store, cryptoBox, registry }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
   app.get("/healthz", (_req, res) => res.json({ ok: true, providers: [...registry.keys()] }));
 
   app.use(createAuthRoutes({ store, passwords, sessions }));
+  app.use(createWorkspaceTokenRoutes({ store, sessions }));
   app.use(createConnectionRoutes({
     store, cryptoBox, registry, sessions,
     stateTtlSeconds: config.stateTtlSeconds,

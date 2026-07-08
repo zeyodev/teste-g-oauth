@@ -10,6 +10,8 @@
   "revoke_body_extra": { "token_type_hint": "access_token" },
   "profile_url": "https://api.canva.com/rest/v1/users/me",
   "profile_map": { "externalId": "team_user.user_id", "name": "team_user.user_id" },
+  "api_base_url": "https://api.canva.com",
+  "auth_injection": { "kind": "bearer" },
   "pkce": true,
   "token_auth_kind": "basic",
   "client_id_env": "CANVA_CLIENT_ID",
