@@ -10,7 +10,7 @@ import crypto from "crypto";
 import express from "express";
 import { hashToken } from "../lib/crypto.js";
 
-export function createWorkspaceTokenRoutes({ store, sessions }) {
+export function createWorkspaceTokenRoutes({ store, sessions, csrf }) {
   const router = express.Router();
 
   // Lista os tokens do usuário: nome/escopos/criado/último uso/revogado.
@@ -29,7 +29,7 @@ export function createWorkspaceTokenRoutes({ store, sessions }) {
 
   // Revoga (seta revoked_at) sem tocar nas conexões. 404 se não for do usuário
   // ou já revogado — o proxy passa a devolver 401 pra esse zwt_ na hora seguinte.
-  router.delete("/auth/workspace-tokens/:id", sessions.requireSession, (req, res) => {
+  router.delete("/auth/workspace-tokens/:id", sessions.requireSession, csrf.require, (req, res) => {
     if (!store.workspaceTokens.revoke(req.user.id, req.params.id)) {
       return res.status(404).json({ error: "token não encontrado ou já revogado" });
     }
@@ -37,7 +37,7 @@ export function createWorkspaceTokenRoutes({ store, sessions }) {
     res.json({ ok: true });
   });
 
-  router.post("/auth/workspace-tokens", sessions.requireSession, (req, res) => {
+  router.post("/auth/workspace-tokens", sessions.requireSession, csrf.require, (req, res) => {
     const { name, scopes } = req.body || {};
     if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name é obrigatório" });

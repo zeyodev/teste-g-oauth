@@ -34,6 +34,12 @@ export function loadConfig(env = process.env) {
     );
   }
 
+  // Número positivo com fallback (rate limit / trust proxy). Ignora lixo.
+  const num = (name, def) => {
+    const n = Number(env[name]);
+    return Number.isFinite(n) && n > 0 ? n : def;
+  };
+
   return {
     port: Number(env.PORT || 5000),
     // redirect_uri dos providers = `${publicBaseUrl}/auth/<name>/callback`
@@ -47,5 +53,25 @@ export function loadConfig(env = process.env) {
     stateTtlSeconds: 10 * 60,           // OAuth state single-use (§9)
     // Secure nos cookies por default; ZKEYS_INSECURE_COOKIE=1 só pra dev em http.
     secureCookies: env.ZKEYS_INSECURE_COOKIE !== "1",
+    // Express trust proxy (§9): atrás do cloud-proxy/tunnel, req.ip é o proxy —
+    // o IP real vem do X-Forwarded-For. Default 1 = confia UM hop (o tunnel).
+    // Aceita número (n hops), "true"/"false" ou string (ex: "loopback").
+    trustProxy: parseTrustProxy(env.ZKEYS_TRUST_PROXY),
+    // Rate limit in-memory (§9). Login: anti-brute-force por IP e por email.
+    // Proxy: anti-abuso por IP (pré-authN) e por token id (pós-authN).
+    // Single-process (1 host); escala horizontal exigiria store compartilhado.
+    rateLimit: {
+      login: { max: num("ZKEYS_RL_LOGIN_MAX", 10), windowMs: num("ZKEYS_RL_LOGIN_WINDOW_S", 300) * 1000 },
+      proxy: { max: num("ZKEYS_RL_PROXY_MAX", 600), windowMs: num("ZKEYS_RL_PROXY_WINDOW_S", 60) * 1000 },
+    },
   };
+}
+
+// ZKEYS_TRUST_PROXY → valor aceito por app.set("trust proxy", …).
+function parseTrustProxy(raw) {
+  if (raw == null || raw === "") return 1;              // default: um hop (tunnel)
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return raw;                                            // "loopback", subnet, etc.
 }

@@ -11,6 +11,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { mkCsrf } from "./helpers.mjs";
 
 // ── env de teste ANTES de importar config ────────────────────────────────
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "zkeys-e2e-"));
@@ -115,6 +116,7 @@ const login = await fetch(`${base}/auth/login`, {
 });
 assert.equal(login.status, 200);
 const cookie = login.headers.get("set-cookie").split(";")[0];
+const csrf = await mkCsrf(base, cookie);   // F4: mutações via cookie levam CSRF
 ok("login → cookie de sessão");
 
 const me = await (await fetch(`${base}/auth/me`, { headers: { cookie } })).json();
@@ -166,20 +168,20 @@ assert.ok(blob.length >= 28, "formato nonce+ct+tag");
 ok("token cifrado at-rest (AES-256-GCM)");
 
 // default explícito
-const def = await fetch(`${base}/connections/${conn.id}/default`, { method: "POST", headers: { cookie } });
+const def = await fetch(`${base}/connections/${conn.id}/default`, { method: "POST", headers: csrf.headers() });
 assert.equal(def.status, 200);
 ok("POST default");
 
 // alias
 const alias = await fetch(`${base}/connections/${conn.id}`, {
-  method: "PATCH", headers: { cookie, "content-type": "application/json" },
+  method: "PATCH", headers: csrf.headers(),
   body: JSON.stringify({ alias: "conta principal" }),
 });
 assert.equal(alias.status, 200);
 ok("PATCH alias");
 
 // delete → revoke no provider + some da lista
-const del = await fetch(`${base}/connections/${conn.id}`, { method: "DELETE", headers: { cookie } });
+const del = await fetch(`${base}/connections/${conn.id}`, { method: "DELETE", headers: csrf.headers() });
 assert.equal(del.status, 200);
 assert.equal(seen.revoked, true, "revoke chegou no provider");
 const after = await (await fetch(`${base}/connections`, { headers: { cookie } })).json();
@@ -188,7 +190,7 @@ ok("DELETE → revoke real + cofre limpo");
 
 // admin cria usuário; user comum não
 const mk = await fetch(`${base}/auth/users`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ email: "user@test.dev", password: "outra-senha-123" }),
 });
 assert.equal(mk.status, 201);
@@ -197,8 +199,9 @@ const ulogin = await fetch(`${base}/auth/login`, {
   body: JSON.stringify({ email: "user@test.dev", password: "outra-senha-123" }),
 });
 const ucookie = ulogin.headers.get("set-cookie").split(";")[0];
+const ucsrf = await mkCsrf(base, ucookie);   // csrf válido → alcança o gate de admin (403 por role, não por CSRF)
 const forbidden = await fetch(`${base}/auth/users`, {
-  method: "POST", headers: { cookie: ucookie, "content-type": "application/json" },
+  method: "POST", headers: ucsrf.headers(),
   body: JSON.stringify({ email: "x@test.dev", password: "12345678" }),
 });
 assert.equal(forbidden.status, 403);

@@ -12,16 +12,18 @@ import express from "express";
 import { createProxyPipeline } from "./middleware.js";
 import { createForward } from "./forward.js";
 
-export function createProxyRouter({ store, cryptoBox, registry }) {
+export function createProxyRouter({ store, cryptoBox, registry, rateLimit }) {
   const router = express.Router();
-  const { authN, authZ, resolve, fresh, refreshConnection } =
-    createProxyPipeline({ store, cryptoBox, registry });
+  const { ipLimit, tokenLimit, authN, authZ, resolve, fresh, refreshConnection } =
+    createProxyPipeline({ store, cryptoBox, registry, rateLimit });
   const forward = createForward({ cryptoBox, refreshConnection });
 
   router.all(
     ["/p/:provider", "/p/:provider/*path"],
+    ipLimit,                                   // §9: teto por IP ANTES de bufferizar o body
     express.raw({ type: () => true, limit: "25mb" }),
     authN,
+    tokenLimit,                                // §9: teto por token id (pós-authN, alvo real)
     authZ,
     resolve,
     fresh,

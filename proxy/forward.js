@@ -97,7 +97,9 @@ export function createForward({ cryptoBox, refreshConnection }) {
         : undefined;
 
     const attempt = (conn) => {
-      const token = cryptoBox.decrypt(conn.access_token_enc);
+      // Decifra o access com o DEK da linha (§8): openConnection lida com v1
+      // (KEK direto) ou v2 (envelope) conforme a linha tenha dek_wrapped.
+      const token = cryptoBox.openConnection(conn).decrypt(conn.access_token_enc);
       const headers = new Headers();
       for (const [k, v] of Object.entries(req.headers)) {
         if (DROP_REQ.has(k)) continue;

@@ -11,23 +11,57 @@ import { hashToken } from "../lib/crypto.js";
 // Passo 4: refresh se expires_at ausente ou faltando menos que isto.
 const REFRESH_SKEW_MS = 60_000;
 
-export function createProxyPipeline({ store, cryptoBox, registry }) {
+export function createProxyPipeline({ store, cryptoBox, registry, rateLimit }) {
   // Single-flight por connection id: N requests simultâneos com o token
   // vencendo disparam UM refresh; os demais aguardam a mesma promise
   // (evita corrida de rotação de refresh token no provider).
   const inflight = new Map();
 
+  function tooMany(res, r) {
+    res.set("Retry-After", String(r.retryAfterSeconds));
+    return res.status(429).json({ error: "muitas requisições — tente mais tarde" });
+  }
+
+  // Rate limit por IP ANTES do authN (§9): barato e corta flood de token
+  // roubado/anônimo sem nem bufferizar o body. req.ip vem do X-Forwarded-For
+  // via app.set("trust proxy", …) (config.trustProxy) — atrás do tunnel.
+  function ipLimit(req, res, next) {
+    const r = rateLimit.check(`ip:${req.ip}`);
+    if (r.limited) {
+      store.audit("proxy.ratelimited", { detail: `ip:${req.ip}` });
+      return tooMany(res, r);
+    }
+    next();
+  }
+
+  // Rate limit por token id DEPOIS do authN (§9): o alvo real de token roubado.
+  function tokenLimit(req, res, next) {
+    const r = rateLimit.check(`tok:${req.zkeys.token.id}`);
+    if (r.limited) {
+      store.audit("proxy.ratelimited", {
+        userId: req.zkeys.userId,
+        detail: `token ${req.zkeys.token.id}`,
+      });
+      return tooMany(res, r);
+    }
+    next();
+  }
+
   function refreshConnection(connection, provider) {
     if (inflight.has(connection.id)) return inflight.get(connection.id);
     const p = (async () => {
-      const refreshToken = cryptoBox.decrypt(connection.refresh_token_enc);
+      // Abre com o DEK da linha (§8): decifra e re-cifra no MESMO formato/DEK,
+      // então o refresh antigo preservado pelo COALESCE segue decifrável.
+      const box = cryptoBox.openConnection(connection);
+      const refreshToken = box.decrypt(connection.refresh_token_enc);
       if (!refreshToken) throw new Error("connection sem refresh_token — precisa re-OAuth");
       const t = await provider.refreshTokens({ refreshToken });
       store.connections.updateTokens(connection.id, {
-        accessTokenEnc: cryptoBox.encrypt(t.accessToken),
+        accessTokenEnc: box.encrypt(t.accessToken),
         // null aqui → COALESCE do store preserva o refresh antigo (rotação
-        // só sobrescreve quando o provider mandou um novo).
-        refreshTokenEnc: t.refreshToken ? cryptoBox.encrypt(t.refreshToken) : null,
+        // só sobrescreve quando o provider mandou um novo). dek_wrapped não
+        // muda no refresh (mesmo DEK) → updateTokens o preserva.
+        refreshTokenEnc: t.refreshToken ? box.encrypt(t.refreshToken) : null,
         expiresAt: t.expiresIn
           ? new Date(Date.now() + t.expiresIn * 1000).toISOString()
           : null,
@@ -106,5 +140,5 @@ export function createProxyPipeline({ store, cryptoBox, registry }) {
     next();
   }
 
-  return { authN, authZ, resolve, fresh, refreshConnection };
+  return { ipLimit, tokenLimit, authN, authZ, resolve, fresh, refreshConnection };
 }

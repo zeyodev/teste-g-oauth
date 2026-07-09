@@ -15,6 +15,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { mkCsrf } from "./helpers.mjs";
 
 // ── env de teste ANTES de importar config ────────────────────────────────
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "zkeys-tokens-e2e-"));
@@ -147,6 +148,7 @@ const login = await fetch(`${base}/auth/login`, {
   body: JSON.stringify({ email: "admin@test.dev", password: "senha-forte-123" }),
 });
 const cookie = login.headers.get("set-cookie").split(";")[0];
+const csrf = await mkCsrf(base, cookie);   // F4: emitir/revogar zwt_ via cookie leva CSRF
 
 async function connect(provider) {
   const start = await fetch(`${base}/auth/${provider}/start?pack=basico`, {
@@ -170,7 +172,7 @@ const ok = (name) => { passed++; console.log(`  ✓ ${name}`); };
 // GET exige sessão.
 assert.equal((await fetch(`${base}/auth/workspace-tokens`)).status, 401);
 const issue = await fetch(`${base}/auth/workspace-tokens`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ name: "ws duo", scopes: ["metasign", "nosign"] }),
 });
 assert.equal(issue.status, 201);
@@ -200,7 +202,7 @@ assert.ok(listUsed[0].last_used_at, "last_used_at preenchido após uso");
 
 // DELETE revoga; 404 pra id alheio/inexistente e pra re-revogação.
 assert.equal(
-  (await fetch(`${base}/auth/workspace-tokens/naoexiste`, { method: "DELETE", headers: { cookie } })).status,
+  (await fetch(`${base}/auth/workspace-tokens/naoexiste`, { method: "DELETE", headers: csrf.headers() })).status,
   404
 );
 assert.equal(
@@ -208,11 +210,11 @@ assert.equal(
   401, "DELETE exige sessão"
 );
 assert.equal(
-  (await fetch(`${base}/auth/workspace-tokens/${tok.id}`, { method: "DELETE", headers: { cookie } })).status,
+  (await fetch(`${base}/auth/workspace-tokens/${tok.id}`, { method: "DELETE", headers: csrf.headers() })).status,
   200
 );
 assert.equal(
-  (await fetch(`${base}/auth/workspace-tokens/${tok.id}`, { method: "DELETE", headers: { cookie } })).status,
+  (await fetch(`${base}/auth/workspace-tokens/${tok.id}`, { method: "DELETE", headers: csrf.headers() })).status,
   404, "re-revogar → 404"
 );
 const list2 = await (await fetch(`${base}/auth/workspace-tokens`, { headers: { cookie } })).json();
@@ -226,7 +228,7 @@ ok("(i.b) DELETE revoga (404 alheio/já-revogado) → zwt_ revogado dá 401 no p
 
 // Token novo, escopo total, pros testes de sign.
 const t2 = await (await fetch(`${base}/auth/workspace-tokens`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ name: "ws total", scopes: ["*"] }),
 })).json();
 

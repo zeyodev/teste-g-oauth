@@ -63,9 +63,16 @@
   .err { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 1em; }
   header { display: flex; justify-content: space-between; align-items: center; }
   [hidden] { display: none !important; }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--danger); color: var(--fg);
+    padding: 12px 18px; border-radius: var(--radius); font-size: 14px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 10;
+  }
 </style>
 </head>
 <body>
+<div id="toast" hidden></div>
 <div class="wrap">
   <header>
     <h1>z<em>keys</em></h1>
@@ -153,22 +160,77 @@
       </table>
       <p class="muted" id="tokens-empty" hidden>Nenhum token ainda — gere um acima e salve como secret ZKEYS_TOKEN no workspace.</p>
     </div>
+
+    <!-- Usuários (só admin) -->
+    <div class="card" id="card-users" hidden>
+      <h2>Usuários</h2>
+      <p class="muted">Criar acesso à plataforma (fechada/por-convite). Só admin.</p>
+      <div class="row">
+        <div>
+          <label>email</label>
+          <input id="usr-email" type="email" placeholder="pessoa@x.dev">
+        </div>
+        <div>
+          <label>senha (mín. 8)</label>
+          <input id="usr-pass" type="password" placeholder="••••••••">
+        </div>
+        <div style="flex:0">
+          <label>papel</label>
+          <select id="usr-role"><option value="user">user</option><option value="admin">admin</option></select>
+        </div>
+        <div style="flex:0"><button id="btn-user">Criar</button></div>
+      </div>
+      <div class="err" id="user-err"></div>
+    </div>
+
+    <!-- Atividade (auditoria do próprio usuário) -->
+    <div class="card">
+      <h2>Atividade</h2>
+      <p class="muted">Sua trilha de auditoria — conexões, tokens, logins e negações do proxy. Nenhum segredo aparece aqui.</p>
+      <table>
+        <thead><tr><th>quando</th><th>ação</th><th>plataforma</th><th>detalhe</th></tr></thead>
+        <tbody id="tbl-audit"></tbody>
+      </table>
+      <p class="muted" id="audit-empty" hidden>Nenhum evento ainda.</p>
+    </div>
   </div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Token CSRF (double-submit): o cookie zkeys_csrf é legível; ecoamos no header
+// X-CSRF-Token nas mutações (o servidor confere um contra o outro).
+const csrfToken = () =>
+  (document.cookie.split("; ").find((c) => c.startsWith("zkeys_csrf=")) || "").split("=")[1] || "";
+
+// Toast simples pra 429 (rate limit) e afins — na identidade da landing.
+function toast(msg) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (el.hidden = true), 5000);
+}
+
 const api = async (path, opts = {}) => {
-  const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
-    credentials: "same-origin",
-    ...opts,
-  });
+  const method = (opts.method || "GET").toUpperCase();
+  const headers = { "content-type": "application/json", ...(opts.headers || {}) };
+  if (!["GET", "HEAD"].includes(method)) {
+    headers["x-csrf-token"] = decodeURIComponent(csrfToken());
+  }
+  const res = await fetch(path, { credentials: "same-origin", ...opts, headers });
   if (res.status === 401) { show("login"); throw new Error("não autenticado"); }
+  if (res.status === 429) {
+    const s = res.headers.get("retry-after");
+    toast(s ? `Muitas tentativas — tente em ${s}s.` : "Muitas tentativas — tente mais tarde.");
+    throw new Error("rate limited");
+  }
   return res;
 };
 
 let providers = [];
+let me = null;
 
 function show(view) {
   $("view-login").hidden = view !== "login";
@@ -179,13 +241,17 @@ function show(view) {
 async function boot() {
   const res = await fetch("/auth/me", { credentials: "same-origin" });
   if (!res.ok) return show("login");
-  const me = await res.json();
+  me = await res.json();
   $("who-email").textContent = me.email;
+  $("card-users").hidden = me.role !== "admin";   // card admin só pra role admin
   show("app");
-  await Promise.all([loadProviders(), loadConnections(), loadTokens()]);
+  // Garante o cookie CSRF antes de qualquer mutação (double-submit).
+  await fetch("/auth/csrf", { credentials: "same-origin" });
+  await Promise.all([loadProviders(), loadConnections(), loadTokens(), loadAudit()]);
 }
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("pt-BR") : "—");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function loadProviders() {
   providers = await (await api("/providers")).json();
@@ -216,7 +282,10 @@ async function loadConnections() {
       <td class="muted">${c.expires_at ? new Date(c.expires_at).toLocaleString("pt-BR") : "—"}</td>
       <td>${c.is_default ? '<span class="badge">padrão</span>'
             : `<button class="ghost" data-act="default" data-id="${c.id}">tornar padrão</button>`}</td>
-      <td><button class="ghost danger" data-act="remove" data-id="${c.id}">remover</button></td>
+      <td>
+        <button class="ghost" data-act="alias" data-id="${c.id}" data-alias="${esc(c.alias || "")}">alias</button>
+        <button class="ghost danger" data-act="remove" data-id="${c.id}">remover</button>
+      </td>
     </tr>`).join("");
 }
 
@@ -225,11 +294,16 @@ $("tbl-conns").addEventListener("click", async (ev) => {
   if (!btn) return;
   if (btn.dataset.act === "default") {
     await api(`/connections/${btn.dataset.id}/default`, { method: "POST" });
+  } else if (btn.dataset.act === "alias") {
+    const alias = prompt("Alias (rótulo humano) — vazio remove o alias:", btn.dataset.alias || "");
+    if (alias === null) return;   // cancelou
+    await api(`/connections/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ alias }) });
   } else if (btn.dataset.act === "remove") {
     if (!confirm("Remover esta credencial? O acesso no provider será revogado.")) return;
     await api(`/connections/${btn.dataset.id}`, { method: "DELETE" });
   }
   loadConnections();
+  loadAudit();
 });
 
 // ── Workspace tokens (zwt_) ──────────────────────────────────────────────
@@ -262,6 +336,7 @@ $("btn-token").addEventListener("click", async () => {
   $("tok-name").value = "";
   $("tok-scopes").value = "";
   loadTokens();
+  loadAudit();
 });
 
 $("btn-copy-token").addEventListener("click", async () => {
@@ -279,6 +354,47 @@ $("tbl-tokens").addEventListener("click", async (ev) => {
   await api(`/auth/workspace-tokens/${btn.dataset.id}`, { method: "DELETE" });
   $("token-reveal").hidden = true;
   loadTokens();
+  loadAudit();
+});
+
+// ── Atividade (auditoria do próprio usuário) ─────────────────────────────
+const AUDIT_LABELS = {
+  "connection.connect": "conectou plataforma",
+  "connection.revoke": "removeu conexão",
+  "token.issue": "gerou workspace token",
+  "token.revoke": "revogou workspace token",
+  "login.fail": "falha de login",
+  "login.ratelimited": "login bloqueado (rate limit)",
+  "proxy.deny": "proxy negado (escopo)",
+  "proxy.ratelimited": "proxy bloqueado (rate limit)",
+  "user.create": "criou usuário",
+};
+
+async function loadAudit() {
+  const rows = await (await api("/audit")).json();
+  $("audit-empty").hidden = rows.length > 0;
+  $("tbl-audit").innerHTML = rows.map((r) => `
+    <tr>
+      <td class="muted">${fmtDate(r.at)}</td>
+      <td>${esc(AUDIT_LABELS[r.action] || r.action)}</td>
+      <td class="muted">${esc(r.provider || "—")}</td>
+      <td class="muted">${esc(r.detail || "—")}</td>
+    </tr>`).join("");
+}
+
+// ── Usuários (só admin) ──────────────────────────────────────────────────
+$("btn-user").addEventListener("click", async () => {
+  $("user-err").textContent = "";
+  const email = $("usr-email").value.trim();
+  const password = $("usr-pass").value;
+  const role = $("usr-role").value;
+  if (!email || !password) { $("user-err").textContent = "email e senha são obrigatórios"; return; }
+  const res = await api("/auth/users", { method: "POST", body: JSON.stringify({ email, password, role }) });
+  if (!res.ok) { $("user-err").textContent = (await res.json()).error || "erro ao criar usuário"; return; }
+  $("usr-email").value = "";
+  $("usr-pass").value = "";
+  toast(`Usuário ${email} criado.`);
+  loadAudit();
 });
 
 $("form-login").addEventListener("submit", async (ev) => {
@@ -292,7 +408,12 @@ $("form-login").addEventListener("submit", async (ev) => {
     body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
   });
   if (!res.ok) {
-    $("login-err").textContent = (await res.json()).error || "erro no login";
+    let msg = (await res.json().catch(() => ({}))).error || "erro no login";
+    if (res.status === 429) {
+      const s = res.headers.get("retry-after");
+      if (s) msg = `Muitas tentativas — tente em ${s}s.`;
+    }
+    $("login-err").textContent = msg;
     return;
   }
   boot();

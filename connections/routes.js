@@ -10,7 +10,7 @@ import express from "express";
 import { pkcePair } from "./OAuth2Provider.js";
 import { popupHtml } from "./popup.js";
 
-export function createConnectionRoutes({ store, cryptoBox, registry, sessions, stateTtlSeconds }) {
+export function createConnectionRoutes({ store, cryptoBox, registry, sessions, csrf, stateTtlSeconds }) {
   const router = express.Router();
   const { requireSession } = sessions;
 
@@ -78,14 +78,20 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, s
       // Dedup por conta: externalId do provider; fallback email; senão fixa.
       const accountKey = String(profile.externalId ?? profile.email ?? "default");
       const scopes = tokens.scope ?? provider.packs[st.pack]?.scopes ?? [];
+      // Envelope (§8): reconexão da MESMA conta reusa o DEK da linha (senão o
+      // refresh preservado pelo COALESCE do upsert ficaria com DEK divergente);
+      // conta nova sorteia um DEK fresco.
+      const existing = store.connections.findByAccount(st.user_id, provider.name, accountKey);
+      const box = existing ? cryptoBox.openConnection(existing) : cryptoBox.newConnection();
       const conn = store.connections.upsert({
         userId: st.user_id,
         provider: provider.name,
         accountKey,
         email: profile.email ?? null,
         scopesJson: JSON.stringify(scopes),
-        accessTokenEnc: cryptoBox.encrypt(tokens.accessToken),
-        refreshTokenEnc: tokens.refreshToken ? cryptoBox.encrypt(tokens.refreshToken) : null,
+        accessTokenEnc: box.encrypt(tokens.accessToken),
+        refreshTokenEnc: tokens.refreshToken ? box.encrypt(tokens.refreshToken) : null,
+        dekWrapped: box.dekWrapped,
         expiresAt: tokens.expiresIn
           ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
           : null,
@@ -114,14 +120,14 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, s
     })));
   });
 
-  router.post("/connections/:id/default", requireSession, (req, res) => {
+  router.post("/connections/:id/default", requireSession, csrf.require, (req, res) => {
     if (!store.connections.setDefault(req.user.id, req.params.id)) {
       return res.status(404).json({ error: "conexão não encontrada" });
     }
     res.json({ ok: true });
   });
 
-  router.patch("/connections/:id", requireSession, (req, res) => {
+  router.patch("/connections/:id", requireSession, csrf.require, (req, res) => {
     const alias = req.body?.alias;
     if (typeof alias !== "string") return res.status(400).json({ error: "alias é obrigatório" });
     if (!store.connections.updateAlias(req.user.id, req.params.id, alias.trim() || null)) {
@@ -131,7 +137,7 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, s
   });
 
   // Revoke real no provider (best-effort, §9) + remoção do cofre.
-  router.delete("/connections/:id", requireSession, async (req, res) => {
+  router.delete("/connections/:id", requireSession, csrf.require, async (req, res) => {
     const conn = store.connections.findById(req.params.id);
     if (!conn || conn.user_id !== req.user.id) {
       return res.status(404).json({ error: "conexão não encontrada" });
@@ -139,9 +145,10 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, s
     const provider = registry.get(conn.provider);
     if (provider) {
       try {
+        const box = cryptoBox.openConnection(conn);   // decifra com o DEK da linha (v1 ou v2)
         await provider.revokeTokens({
-          accessToken: cryptoBox.decrypt(conn.access_token_enc),
-          refreshToken: cryptoBox.decrypt(conn.refresh_token_enc),
+          accessToken: box.decrypt(conn.access_token_enc),
+          refreshToken: box.decrypt(conn.refresh_token_enc),
         });
       } catch (e) {
         console.warn(`[zkeys/${conn.provider}] revoke no provider falhou (removendo mesmo assim):`, e.message);

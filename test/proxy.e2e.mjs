@@ -12,6 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { mkCsrf } from "./helpers.mjs";
 
 // ── env de teste ANTES de importar config ────────────────────────────────
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "zkeys-proxy-e2e-"));
@@ -152,6 +153,7 @@ const login = await fetch(`${base}/auth/login`, {
   body: JSON.stringify({ email: "admin@test.dev", password: "senha-forte-123" }),
 });
 const cookie = login.headers.get("set-cookie").split(";")[0];
+const csrf = await mkCsrf(base, cookie);   // F4: emissão de zwt_ via cookie leva CSRF
 
 async function connect(provider) {
   const start = await fetch(`${base}/auth/${provider}/start?pack=basico`, {
@@ -174,19 +176,19 @@ assert.equal(
   (await fetch(`${base}/auth/workspace-tokens`, { method: "POST" })).status, 401
 );
 const badScopes = await fetch(`${base}/auth/workspace-tokens`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ name: "x", scopes: [] }),
 });
 assert.equal(badScopes.status, 400);
 const issue = await fetch(`${base}/auth/workspace-tokens`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ name: "ws só mock", scopes: ["mock"] }),
 });
 assert.equal(issue.status, 201);
 const scoped = await issue.json();
 assert.match(scoped.token, /^zwt_[A-Za-z0-9_-]{40,}$/);
 const issueAll = await fetch(`${base}/auth/workspace-tokens`, {
-  method: "POST", headers: { cookie, "content-type": "application/json" },
+  method: "POST", headers: csrf.headers(),
   body: JSON.stringify({ name: "ws total", scopes: ["*"] }),
 });
 const all = await issueAll.json();
@@ -241,9 +243,10 @@ assert.equal(seen.headers.authorization, "Bearer at-refresh-1", "retry usa o tok
 assert.equal(refreshes, 1, "exatamente 1 refresh");
 const mockConn = store.db
   .prepare("SELECT * FROM connections WHERE provider = 'mock'").get();
-assert.equal(cryptoBox.decrypt(mockConn.access_token_enc), "at-refresh-1",
+const mockBox = cryptoBox.openConnection(mockConn);   // envelope: decifra com o DEK da linha
+assert.equal(mockBox.decrypt(mockConn.access_token_enc), "at-refresh-1",
   "access novo regravado cifrado");
-assert.equal(cryptoBox.decrypt(mockConn.refresh_token_enc), "rt-refresh-1",
+assert.equal(mockBox.decrypt(mockConn.refresh_token_enc), "rt-refresh-1",
   "rotação de refresh token persistida");
 ok("(v) 401 → refresh 1x → retry 200; tokens novos cifrados no cofre");
 
