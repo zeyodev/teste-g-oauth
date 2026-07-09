@@ -54,7 +54,10 @@ export function createApp(config) {
   // express.json() consumiria o stream e quebraria o forward. Rate limit por
   // IP/token vive DENTRO do router, respeitando essa ordem.
   app.use(createProxyRouter({ store, cryptoBox, registry, rateLimit: proxyLimiter }));
-  app.use(express.json());
+  // `verify` stasha o corpo CRU em req.rawBody: hooks de webhook (inbound)
+  // validam X-Hub-Signature-256 sobre os BYTES exatos — o body reserializado
+  // não bate no HMAC. Não afeta o proxy (montado acima, com raw próprio).
+  app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
   app.use(express.urlencoded({ extended: true }));
   // Emite o cookie CSRF em GETs (rotas web); o proxy /p/* já retornou acima.
   app.use(csrf.issue);
@@ -71,7 +74,7 @@ export function createApp(config) {
   app.use(createAuditRoutes({ store, sessions }));
 
   // Hooks por-provider que instalam rotas próprias (ex: data-deletion do Meta).
-  for (const provider of registry.values()) provider.installExtensions(app, HOOKS);
+  for (const provider of registry.values()) provider.installExtensions(app, HOOKS, { store });
 
   // UI mínima (F1). F4 evolui.
   app.use("/", express.static(path.join(ROOT, "web")));

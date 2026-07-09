@@ -36,6 +36,13 @@ export default class OAuth2Provider {
     this.config = config;
     this.clientId = env[config.client_id_env];
     this.clientSecret = env[config.client_secret_env];
+    // Verify token do webhook (inbound). Mesmo padrão *_env do id/secret: fica
+    // fora do repo, lido só aqui via env injetado. Usado pelo hook de webhook
+    // no handshake GET (hub.verify_token). Opcional — provider sem webhook não
+    // declara a env e isto fica null.
+    this.webhookVerifyToken = config.webhook_verify_token_env
+      ? env[config.webhook_verify_token_env] || null
+      : null;
     this.publicBaseUrl = publicBaseUrl;
     this.callbackUrl = `${publicBaseUrl}/auth/${this.name}/callback`;
     // Params extras do authorize: `authorize_extra` são estáticos no JSON;
@@ -62,9 +69,13 @@ export default class OAuth2Provider {
       response_type: "code",
       client_id: this.clientId,
       redirect_uri: this.callbackUrl,
-      scope: (scopes || []).join(" "),
       state,
     });
+    // Embedded Signup (WhatsApp/Meta) dirige as permissões pelo config_id e
+    // ignora `scope`; só mandamos scope quando há algum (senão vira `scope=`
+    // vazio ruidoso).
+    const scope = (scopes || []).join(" ");
+    if (scope) params.set("scope", scope);
     for (const [k, v] of Object.entries(this.authorizeExtra)) params.set(k, v);
     for (const [k, v] of Object.entries(extra)) params.set(k, v);
     if (codeChallenge) {
@@ -111,12 +122,44 @@ export default class OAuth2Provider {
       body.set("code_verifier", codeVerifier);
     }
     const data = await this._tokenRequest(body, "token exchange");
+    let accessToken = data.access_token;
+    let refreshToken = data.refresh_token || null;
+    let expiresIn = data.expires_in ? Number(data.expires_in) : null;
+    // Instagram-login: o code exchange devolve um token short-lived (~1h) sem
+    // refresh_token nem expires_in. `long_lived_exchange` troca por um token de
+    // ~60 dias em graph.instagram.com (GET com client_secret + o token curto).
+    if (this.config.long_lived_exchange) {
+      const ll = await this._longLivedExchange(accessToken);
+      accessToken = ll.accessToken;
+      expiresIn = ll.expiresIn;
+    }
+    // `self_refresh`: providers sem refresh_token dedicado (Instagram) renovam o
+    // PRÓPRIO access token. Persistimos o long-lived também como refresh_token
+    // (a semente do refresh) pra o fresh() do proxy disparar perto do vencimento.
+    if (this.config.self_refresh && !refreshToken) refreshToken = accessToken;
     return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || null,
-      expiresIn: data.expires_in ? Number(data.expires_in) : null,
+      accessToken,
+      refreshToken,
+      expiresIn,
       scope: typeof data.scope === "string" ? data.scope.split(/[ ,]+/).filter(Boolean) : null,
     };
+  }
+
+  // Troca short-lived → long-lived (Instagram-login). GET graph.instagram.com/
+  // access_token?grant_type=ig_exchange_token&client_secret=…&access_token=curto.
+  async _longLivedExchange(shortToken) {
+    const cfg = this.config.long_lived_exchange;
+    const url = new URL(cfg.url);
+    url.searchParams.set("grant_type", cfg.grant_type);
+    url.searchParams.set("client_secret", this.clientSecret);
+    url.searchParams.set("access_token", shortToken);
+    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
+    const text = await resp.text();
+    let data; try { data = JSON.parse(text); } catch { data = {}; }
+    if (!resp.ok || !data.access_token) {
+      throw new Error(`long-lived exchange ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    return { accessToken: data.access_token, expiresIn: data.expires_in ? Number(data.expires_in) : null };
   }
 
   async fetchProfile(accessToken) {
@@ -139,8 +182,98 @@ export default class OAuth2Provider {
     return mapProfile(raw, this.config.profile_map);
   }
 
+  // Descoberta de conta pós-token (WhatsApp Embedded Signup / coexistence). O
+  // token de ES é business-scoped e /me NÃO identifica o número; e como o zkeys
+  // é redirect puro (sem o FB JS SDK capturando o evento WA_EMBEDDED_SIGNUP),
+  // descobrimos por Graph: debug_token → waba_id (granular scope) →
+  // /{waba_id}/phone_numbers → phone_number_id. Gated por `account_discovery`
+  // no JSON (OCP: só o WhatsApp declara; providers sem isso não descobrem).
+  // Best-effort: o caller trata como opcional — falha aqui não derruba o connect.
+  async discoverAccount(accessToken) {
+    const cfg = this.config.account_discovery;
+    if (!cfg) return null;
+    const wabaId = await this._discoverWabaId(accessToken, cfg.scope);
+    if (!wabaId) return null;
+    const number = await this._discoverPhoneNumber(accessToken, wabaId);
+    return {
+      externalId: wabaId,
+      name: number?.verified_name || number?.display_phone_number || wabaId,
+      metadata: { waba_id: wabaId, ...(number || {}) },
+    };
+  }
+
+  // App access token (`APP_ID|APP_SECRET`) — usado no debug_token, que inspeciona
+  // um token de USUÁRIO a partir das credenciais do app (não do próprio token).
+  _appAccessToken() {
+    return `${this.clientId}|${this.clientSecret}`;
+  }
+
+  _appsecretProof(accessToken) {
+    return crypto.createHmac("sha256", this.clientSecret).update(String(accessToken)).digest("hex");
+  }
+
+  // debug_token → granular_scopes[].target_ids: os IDs de WABA que o token
+  // enxerga sob o scope de management. Pega o primeiro do scope pedido (fallback:
+  // primeiro scope que traga target_ids).
+  async _discoverWabaId(accessToken, scopeName) {
+    const url = new URL(`${this.config.api_base_url}/debug_token`);
+    url.searchParams.set("input_token", accessToken);
+    url.searchParams.set("access_token", this._appAccessToken());
+    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
+    const text = await resp.text();
+    let data; try { data = JSON.parse(text); } catch { data = {}; }
+    if (!resp.ok) throw new Error(`debug_token ${resp.status}: ${text.slice(0, 200)}`);
+    const gs = data?.data?.granular_scopes || [];
+    const match =
+      gs.find((g) => g.scope === scopeName && g.target_ids?.length) ||
+      gs.find((g) => Array.isArray(g.target_ids) && g.target_ids.length);
+    return match?.target_ids?.[0] || null;
+  }
+
+  // GET /{waba_id}/phone_numbers → o número de origem (phone_number_id) que a
+  // org usa pra enviar. appsecret_proof quando o provider exige (sign=…proof).
+  async _discoverPhoneNumber(accessToken, wabaId) {
+    const url = new URL(`${this.config.api_base_url}/${wabaId}/phone_numbers`);
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("fields", "id,display_phone_number,verified_name");
+    if (this.config.sign === "appsecret_proof") {
+      url.searchParams.set("appsecret_proof", this._appsecretProof(accessToken));
+    }
+    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
+    const text = await resp.text();
+    let data; try { data = JSON.parse(text); } catch { data = {}; }
+    if (!resp.ok) throw new Error(`phone_numbers ${resp.status}: ${text.slice(0, 200)}`);
+    const n = Array.isArray(data?.data) ? data.data[0] : null;
+    if (!n) return null;
+    return {
+      phone_number_id: n.id,
+      display_phone_number: n.display_phone_number || null,
+      verified_name: n.verified_name || null,
+    };
+  }
+
   async refreshTokens({ refreshToken }) {
     if (!refreshToken) throw new Error("refresh_token ausente");
+    // self_refresh (Instagram): renova o próprio long-lived via GET
+    // refresh_access_token?grant_type=ig_refresh_token&access_token=atual. O
+    // token novo vira também a nova semente de refresh (rotação).
+    if (this.config.self_refresh) {
+      const cfg = this.config.self_refresh;
+      const url = new URL(cfg.url);
+      url.searchParams.set("grant_type", cfg.grant_type);
+      url.searchParams.set("access_token", refreshToken);
+      const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch { data = {}; }
+      if (!resp.ok || !data.access_token) {
+        throw new Error(`self-refresh ${resp.status}: ${text.slice(0, 200)}`);
+      }
+      return {
+        accessToken: data.access_token,
+        refreshToken: data.access_token,
+        expiresIn: data.expires_in ? Number(data.expires_in) : null,
+      };
+    }
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -177,14 +310,14 @@ export default class OAuth2Provider {
 
   // Hooks por-provider (Strategy, §6): rotas extras declaradas em
   // config.extensions (ex: meta_signed_request → data-deletion callback).
-  installExtensions(app, hooks) {
+  installExtensions(app, hooks, ctx = {}) {
     for (const extName of this.config.extensions || []) {
       const ext = hooks[extName];
       if (!ext) {
         console.warn(`[zkeys/${this.name}] extension desconhecida: ${extName}`);
         continue;
       }
-      ext(app, this);
+      ext(app, this, ctx);
     }
   }
 }

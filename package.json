@@ -7,12 +7,14 @@
   "scripts": {
     "start": "node index.js",
     "create-user": "node scripts/create-user.js",
+    "set-manual-token": "node scripts/set-manual-token.js",
     "migrate-envelope": "node scripts/migrate-envelope.js",
     "rotate-kek": "node scripts/rotate-kek.js",
-    "test": "node test/smoke.e2e.mjs && node test/proxy.e2e.mjs && node test/tokens.e2e.mjs && node test/hardening.e2e.mjs",
+    "test": "node test/smoke.e2e.mjs && node test/proxy.e2e.mjs && node test/tokens.e2e.mjs && node test/hardening.e2e.mjs && node test/webhook.e2e.mjs && node test/whatsapp.e2e.mjs",
     "test:proxy": "node test/proxy.e2e.mjs",
     "test:tokens": "node test/tokens.e2e.mjs",
-    "test:hardening": "node test/hardening.e2e.mjs"
+    "test:hardening": "node test/hardening.e2e.mjs",
+    "test:whatsapp": "node test/whatsapp.e2e.mjs"
   },
   "license": "UNLICENSED",
   "private": true,

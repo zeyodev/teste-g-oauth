@@ -1,0 +1,40 @@
+{
+  "name": "whatsapp",
+  "displayName": "WhatsApp (Cloud API)",
+  "authorize_url": "https://www.facebook.com/v23.0/dialog/oauth",
+  "token_url": "https://graph.facebook.com/v23.0/oauth/access_token",
+  "profile_url": "https://graph.facebook.com/v23.0/me",
+  "profile_url_params": { "fields": "id,name" },
+  "profile_map": { "externalId": "id", "name": "name" },
+  "api_base_url": "https://graph.facebook.com/v23.0",
+  "auth_injection": { "kind": "bearer" },
+  "sign": "appsecret_proof",
+  "pkce": false,
+  "auth_token_in_header": false,
+  "client_id_env": "WHATSAPP_APP_ID",
+  "client_secret_env": "WHATSAPP_APP_SECRET",
+  "webhook_verify_token_env": "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+  "authorize_extra_env": { "config_id": "WHATSAPP_APP_CONFIG" },
+  "account_discovery": { "kind": "whatsapp", "scope": "whatsapp_business_management" },
+  "packs": {
+    "cloud": {
+      "label": "WhatsApp Cloud API (número novo)",
+      "description": "Embedded Signup padrão: cadastrar um número novo na Cloud API.",
+      "scopes": ["whatsapp_business_messaging", "whatsapp_business_management"],
+      "authorize_extra": {
+        "extras": "{\"feature\":\"whatsapp_embedded_signup\",\"sessionInfoVersion\":\"3\"}",
+        "override_default_response_type": "true"
+      }
+    },
+    "coexistence": {
+      "label": "WhatsApp — conectar número existente (coexistence)",
+      "description": "Conecta um número que já roda no app WhatsApp Business, sem perder o histórico (passa a funcionar no app E na Cloud API).",
+      "scopes": ["whatsapp_business_messaging", "whatsapp_business_management"],
+      "authorize_extra": {
+        "extras": "{\"featureType\":\"whatsapp_business_app_onboarding\",\"sessionInfoVersion\":\"3\"}",
+        "override_default_response_type": "true"
+      }
+    }
+  },
+  "extensions": ["graph_webhook"]
+}

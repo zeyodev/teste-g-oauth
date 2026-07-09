@@ -30,8 +30,24 @@ function parseSignedRequest(signedRequest, clientSecret) {
   return data;
 }
 
-export default function install(app, provider) {
+export default function install(app, provider, { store } = {}) {
   const base = `/auth/${provider.name}`;
+
+  // Cancelamento de autorização (deauthorize callback): a Meta/Instagram faz um
+  // POST com signed_request quando a pessoa remove o app. Validamos a assinatura
+  // e auditamos; 200 rápido. (Revogar a conexão exige mapear user_id do
+  // signed_request → conexão no cofre — próximo passo.)
+  app.post(`${base}/deauthorize`, (req, res) => {
+    const signedRequest = req.body?.signed_request;
+    if (!signedRequest) return res.status(400).json({ error: "signed_request é obrigatório." });
+    const data = parseSignedRequest(signedRequest, provider.clientSecret);
+    if (!data) return res.status(403).json({ error: "Assinatura inválida." });
+    store?.audit("connection.deauthorize", {
+      provider: provider.name,
+      detail: `user_id=${data.user_id ?? "?"}`,
+    });
+    return res.sendStatus(200);
+  });
 
   app.post(`${base}/data-deletion`, (req, res) => {
     const signedRequest = req.body?.signed_request;

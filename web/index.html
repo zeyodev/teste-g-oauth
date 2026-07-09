@@ -278,7 +278,9 @@ async function loadConnections() {
   $("tbl-conns").innerHTML = conns.map(c => `
     <tr>
       <td>${c.provider}</td>
-      <td>${c.alias || c.email || c.account_key}</td>
+      <td>${esc(c.alias || c.display_name || c.email || c.account_key)}${
+        (c.display_name || c.email) ? `<br><span class="muted" style="font-size:.85em">${esc(c.account_key)}</span>` : ""}${
+        c.metadata?.phone_number_id ? `<br><span class="muted" style="font-size:.85em">☎ ${esc(c.metadata.display_phone_number || c.metadata.phone_number_id)} · id ${esc(c.metadata.phone_number_id)}</span>` : ""}</td>
       <td class="muted">${c.expires_at ? new Date(c.expires_at).toLocaleString("pt-BR") : "—"}</td>
       <td>${c.is_default ? '<span class="badge">padrão</span>'
             : `<button class="ghost" data-act="default" data-id="${c.id}">tornar padrão</button>`}</td>

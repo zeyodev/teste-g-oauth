@@ -6,10 +6,12 @@ import fs from "fs";
 import path from "path";
 import OAuth2Provider from "./OAuth2Provider.js";
 import metaSignedRequest from "../providers/hooks/meta_signed_request.js";
+import graphWebhook from "../providers/hooks/graph_webhook.js";
 
 // Hooks nomeados que os JSONs podem referenciar em `extensions`.
 export const HOOKS = {
   meta_signed_request: metaSignedRequest,
+  graph_webhook: graphWebhook,
 };
 
 export function loadProviders({ providersDir, publicBaseUrl, env = process.env }) {

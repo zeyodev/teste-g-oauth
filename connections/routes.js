@@ -43,7 +43,16 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
 
     store.oauthStates.purgeExpired(stateTtlSeconds); // higiene oportunista
     store.oauthStates.create({ state, userId: req.user.id, provider: provider.name, pack, codeVerifier });
-    res.redirect(provider.authorizeUrl({ state, scopes: packCfg.scopes, codeChallenge }));
+    // authorize_extra por-pack: Embedded Signup do WhatsApp usa isto pra escolher
+    // o modo (número novo vs `featureType: whatsapp_business_app_onboarding` =
+    // conectar número existente). Provider-wide authorizeExtra (ex: config_id)
+    // continua vindo do JSON; o do pack sobrepõe.
+    res.redirect(provider.authorizeUrl({
+      state,
+      scopes: packCfg.scopes,
+      codeChallenge,
+      extra: packCfg.authorize_extra || {},
+    }));
   });
 
   // Callback: o state é a autoridade (single-use + TTL) — amarra o code ao
@@ -75,8 +84,19 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
       } catch (e) {
         console.warn(`[zkeys/${provider.name}] profile fetch falhou:`, e.message);
       }
-      // Dedup por conta: externalId do provider; fallback email; senão fixa.
-      const accountKey = String(profile.externalId ?? profile.email ?? "default");
+      // Descoberta de conta (WhatsApp ES): resolve waba_id + phone_number_id via
+      // Graph, já que sem o SDK não há evento WA_EMBEDDED_SIGNUP. Best-effort —
+      // se falhar, cai no profile normal e a conexão ainda é gravada.
+      let discovered = null;
+      try {
+        discovered = await provider.discoverAccount?.(tokens.accessToken);
+      } catch (e) {
+        console.warn(`[zkeys/${provider.name}] discoverAccount falhou:`, e.message);
+      }
+      // Dedup por conta: waba_id descoberto > externalId do perfil > email > fixa.
+      const accountKey = String(discovered?.externalId ?? profile.externalId ?? profile.email ?? "default");
+      const displayName = discovered?.name ?? profile.name ?? null;
+      const metadataJson = discovered?.metadata ? JSON.stringify(discovered.metadata) : null;
       const scopes = tokens.scope ?? provider.packs[st.pack]?.scopes ?? [];
       // Envelope (§8): reconexão da MESMA conta reusa o DEK da linha (senão o
       // refresh preservado pelo COALESCE do upsert ficaria com DEK divergente);
@@ -88,6 +108,12 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
         provider: provider.name,
         accountKey,
         email: profile.email ?? null,
+        // Rótulo humano do provider (username/nome/número) — a UI mostra no lugar
+        // do account_key cru. Ex: "agentemetaorg" ou o display_phone_number do WA.
+        displayName,
+        // Metadata não-secreta descoberta no connect (WhatsApp: waba_id +
+        // phone_number_id + display_phone_number). NULL pros demais providers.
+        metadataJson,
         scopesJson: JSON.stringify(scopes),
         accessTokenEnc: box.encrypt(tokens.accessToken),
         refreshTokenEnc: tokens.refreshToken ? box.encrypt(tokens.refreshToken) : null,
@@ -101,9 +127,10 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
         provider: provider.name,
         detail: conn.email || accountKey,
       });
+      const asWho = profile.email || discovered?.name;
       res.send(popupHtml({
         ok: true,
-        message: `Conectado${profile.email ? ` como ${profile.email}` : ""} — pode fechar esta janela`,
+        message: `Conectado${asWho ? ` como ${asWho}` : ""} — pode fechar esta janela`,
       }));
     } catch (e) {
       console.error(`[zkeys/${provider.name}] callback erro:`, e);
@@ -117,6 +144,9 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
       ...c,
       scopes: JSON.parse(c.scopes_json || "[]"),
       scopes_json: undefined,
+      // metadata não-secreta (WhatsApp: waba_id/phone_number_id). Só o dono vê.
+      metadata: c.metadata_json ? JSON.parse(c.metadata_json) : null,
+      metadata_json: undefined,
     })));
   });
 
