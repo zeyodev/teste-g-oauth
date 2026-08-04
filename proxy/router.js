@@ -18,6 +18,26 @@ export function createProxyRouter({ store, cryptoBox, registry, rateLimit }) {
     createProxyPipeline({ store, cryptoBox, registry, rateLimit });
   const forward = createForward({ cryptoBox, refreshConnection });
 
+  // GET /proxy/connections — machine-to-machine: lista conexões do usuário
+  // autenticado via Bearer zwt_ (mesmo authN do proxy). Metadata only, sem
+  // tokens. Fecha o gap DESIGN-zkeys §11 ("agente descobre via GET /connections").
+  router.get(
+    "/proxy/connections",
+    ipLimit,
+    authN,
+    tokenLimit,
+    (req, res) => {
+      const connections = store.connections.listByUser(req.zkeys.userId);
+      res.json(connections.map((c) => ({
+        ...c,
+        scopes: JSON.parse(c.scopes_json || "[]"),
+        scopes_json: undefined,
+        metadata: c.metadata_json ? JSON.parse(c.metadata_json) : null,
+        metadata_json: undefined,
+      })));
+    }
+  );
+
   router.all(
     ["/p/:provider", "/p/:provider/*path"],
     ipLimit,                                   // §9: teto por IP ANTES de bufferizar o body
