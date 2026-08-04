@@ -1,25 +1,36 @@
 {
   "name": "instagram",
   "displayName": "Instagram (login direto)",
-  "authorize_url": "https://www.instagram.com/oauth/authorize",
-  "token_url": "https://api.instagram.com/oauth/access_token",
-  "profile_url": "https://graph.instagram.com/me",
-  "profile_url_params": { "fields": "id,username,account_type" },
-  "profile_map": { "externalId": "id", "name": "username" },
+  "icon": "instagram.svg",
+  "authorize_url": "https://www.facebook.com/v22.0/dialog/oauth",
+  "token_url": "https://graph.facebook.com/v22.0/oauth/access_token",
+  "revoke_url": "https://graph.facebook.com/v22.0/me/permissions",
+  "revoke_method": "DELETE",
+  "profile_url": "https://graph.facebook.com/v22.0/me",
+  "profile_url_params": { "fields": "id,name" },
+  "profile_map": { "externalId": "id", "name": "name" },
   "api_base_url": "https://graph.instagram.com",
   "auth_injection": { "kind": "query", "param": "access_token" },
+  "sign": "appsecret_proof",
   "pkce": false,
   "auth_token_in_header": false,
   "client_id_env": "INSTAGRAM_APP_ID",
   "client_secret_env": "INSTAGRAM_APP_SECRET",
   "webhook_verify_token_env": "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
+  "authorize_extra_env": {
+    "config_id": "INSTAGRAM_APP_CONFIG"
+  },
   "long_lived_exchange": {
-    "url": "https://graph.instagram.com/access_token",
-    "grant_type": "ig_exchange_token"
+    "url": "https://graph.facebook.com/v22.0/oauth/access_token",
+    "grant_type": "fb_exchange_token",
+    "token_param": "fb_exchange_token",
+    "send_client_id": true
   },
   "self_refresh": {
-    "url": "https://graph.instagram.com/refresh_access_token",
-    "grant_type": "ig_refresh_token"
+    "url": "https://graph.facebook.com/v22.0/oauth/access_token",
+    "grant_type": "fb_exchange_token",
+    "token_param": "fb_exchange_token",
+    "send_client_id": true
   },
   "packs": {
     "manage": {

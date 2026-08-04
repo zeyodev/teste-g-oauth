@@ -71,11 +71,13 @@ export default class OAuth2Provider {
       redirect_uri: this.callbackUrl,
       state,
     });
-    // Embedded Signup (WhatsApp/Meta) dirige as permissões pelo config_id e
-    // ignora `scope`; só mandamos scope quando há algum (senão vira `scope=`
-    // vazio ruidoso).
+    // Embedded Signup (WhatsApp/Meta/Instagram): config_id dirige as permissões
+    // e substitui `scope` — se há config_id nos extras (estático ou do pack),
+    // NÃO mandamos scope (evita conflito e URL mais limpa).
     const scope = (scopes || []).join(" ");
-    if (scope) params.set("scope", scope);
+    const hasConfigId = "config_id" in this.authorizeExtra ||
+                        "config_id" in extra;
+    if (scope && !hasConfigId) params.set("scope", scope);
     for (const [k, v] of Object.entries(this.authorizeExtra)) params.set(k, v);
     for (const [k, v] of Object.entries(extra)) params.set(k, v);
     if (codeChallenge) {
@@ -145,14 +147,19 @@ export default class OAuth2Provider {
     };
   }
 
-  // Troca short-lived → long-lived (Instagram-login). GET graph.instagram.com/
-  // access_token?grant_type=ig_exchange_token&client_secret=…&access_token=curto.
+  // Troca short-lived → long-lived. Ex: Instagram clássico usa GET
+  // graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=…
+  // &access_token=curto; Facebook usa fb_exchange_token como token_param +
+  // send_client_id: true (exige client_id). Config do provider define token_param
+  // (default "access_token") e send_client_id (default false).
   async _longLivedExchange(shortToken) {
     const cfg = this.config.long_lived_exchange;
     const url = new URL(cfg.url);
     url.searchParams.set("grant_type", cfg.grant_type);
+    if (cfg.send_client_id) url.searchParams.set("client_id", this.clientId);
     url.searchParams.set("client_secret", this.clientSecret);
-    url.searchParams.set("access_token", shortToken);
+    const tokenParam = cfg.token_param || "access_token";
+    url.searchParams.set(tokenParam, shortToken);
     const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
     const text = await resp.text();
     let data; try { data = JSON.parse(text); } catch { data = {}; }
@@ -254,14 +261,18 @@ export default class OAuth2Provider {
 
   async refreshTokens({ refreshToken }) {
     if (!refreshToken) throw new Error("refresh_token ausente");
-    // self_refresh (Instagram): renova o próprio long-lived via GET
-    // refresh_access_token?grant_type=ig_refresh_token&access_token=atual. O
-    // token novo vira também a nova semente de refresh (rotação).
+    // self_refresh: provider sem refresh_token dedicado renova o próprio
+    // access token (ex: Instagram clássico usa ig_refresh_token; Facebook usa
+    // fb_exchange_token com o long-lived como token). Config define token_param
+    // (default "access_token") e send_client_id (default false).
     if (this.config.self_refresh) {
       const cfg = this.config.self_refresh;
       const url = new URL(cfg.url);
       url.searchParams.set("grant_type", cfg.grant_type);
-      url.searchParams.set("access_token", refreshToken);
+      if (cfg.send_client_id) url.searchParams.set("client_id", this.clientId);
+      url.searchParams.set("client_secret", this.clientSecret);
+      const tokenParam = cfg.token_param || "access_token";
+      url.searchParams.set(tokenParam, refreshToken);
       const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch { data = {}; }
