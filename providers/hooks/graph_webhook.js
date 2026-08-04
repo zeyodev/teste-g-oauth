@@ -8,8 +8,8 @@
 //        hub.verify_token bate com o token configurado (a Meta faz esse GET ao
 //        salvar o webhook no painel do app).
 //   POST /auth/<provider>/webhook → eventos. Valida X-Hub-Signature-256 (HMAC do
-//        corpo CRU com o app secret) e audita. Por ora SÓ valida+loga; o
-//        roteamento do evento pro workspace da org vem depois.
+//        corpo CRU com o app secret), audita, e ROTEIA o evento pra(s) org(s)
+//        inscrita(s) (webhook_forward_url na connection).
 //
 // Corpo CRU: a assinatura da Meta é sobre os BYTES exatos do corpo, então
 // dependemos de req.rawBody (stashed pelo `verify` do express.json em index.js).
@@ -35,6 +35,38 @@ function validSignature(appSecret, rawBody, header) {
   return safeEqual(sig, expected);
 }
 
+// Extrai WABA IDs dos entries do webhook. O Meta manda:
+// { object: "whatsapp_business_account", entry: [{ id: "<waba_id>", changes: [...] }] }
+function extractWabaIds(body) {
+  const ids = new Set();
+  for (const entry of (body?.entry || [])) {
+    if (entry.id) ids.add(String(entry.id));
+  }
+  return [...ids];
+}
+
+// Encaminha o evento pra uma URL de org (best-effort, 5s timeout, sem retry —
+// a URL da org que lide com durabilidade). Roda em background pra não segurar
+// a resposta 200 que o Meta espera.
+async function forwardToOrg(forwardUrl, body, providerName) {
+  try {
+    const resp = await fetch(forwardUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Zkeys-Webhook": providerName,
+        "X-Zkeys-Signature": crypto.createHmac("sha256", String(forwardUrl))
+          .update(JSON.stringify(body)).digest("hex"),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    return { ok: resp.ok, status: resp.status };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export default function install(app, provider, { store } = {}) {
   const route = `/auth/${provider.name}/webhook`;
   const verifyToken = provider.webhookVerifyToken;
@@ -58,10 +90,31 @@ export default function install(app, provider, { store } = {}) {
       store?.audit("webhook.reject", { provider: provider.name, detail: "assinatura inválida" });
       return res.sendStatus(403);
     }
-    const obj = req.body?.object || "?";
-    const n = Array.isArray(req.body?.entry) ? req.body.entry.length : 0;
+    const body = req.body || {};
+    const obj = body.object || "?";
+    const n = Array.isArray(body.entry) ? body.entry.length : 0;
     store?.audit("webhook.recv", { provider: provider.name, detail: `${obj} entries=${n}` });
-    console.log(`[zkeys/${provider.name}] webhook ${obj} (${n}):`, JSON.stringify(req.body).slice(0, 500));
+    console.log(`[zkeys/${provider.name}] webhook ${obj} (${n}):`, JSON.stringify(body).slice(0, 500));
+
+    // Roteamento: extrai WABA IDs → acha connections com forward_url → encaminha.
+    const wabaIds = extractWabaIds(body);
+    if (wabaIds.length > 0 && store) {
+      for (const wabaId of wabaIds) {
+        const conns = store.connections.findByWabaId(wabaId);
+        for (const conn of conns) {
+          if (conn.webhook_forward_url) {
+            forwardToOrg(conn.webhook_forward_url, body, provider.name).then((result) => {
+              store.audit("webhook.forward", {
+                userId: conn.user_id,
+                provider: provider.name,
+                detail: `waba=${wabaId} url=${conn.webhook_forward_url} ${result.ok ? "200" : result.error || result.status}`,
+              });
+            }).catch(() => {}); // swallow — já auditou
+          }
+        }
+      }
+    }
+
     // 200 rápido: a Meta reenvia se não receber 2xx em poucos segundos.
     return res.sendStatus(200);
   });

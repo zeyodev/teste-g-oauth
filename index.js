@@ -22,6 +22,7 @@ import { loadProviders, HOOKS } from "./connections/registry.js";
 import { createAuthRoutes } from "./auth/routes.js";
 import { createWorkspaceTokenRoutes } from "./auth/tokens.js";
 import { createConnectionRoutes } from "./connections/routes.js";
+import { createWhatsAppSetupRoutes } from "./connections/whatsapp-setup.js";
 import { createAuditRoutes } from "./auth/audit.js";
 import { createProxyRouter } from "./proxy/router.js";
 
@@ -67,6 +68,7 @@ export function createApp(config) {
 
   app.use(createAuthRoutes({ store, passwords, sessions, rateLimit: loginLimiter, csrf }));
   app.use(createWorkspaceTokenRoutes({ store, sessions, csrf }));
+  app.use(createWhatsAppSetupRoutes({ store, cryptoBox, registry }));
   app.use(createConnectionRoutes({
     store, cryptoBox, registry, sessions, csrf,
     stateTtlSeconds: config.stateTtlSeconds,
