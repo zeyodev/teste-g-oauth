@@ -9,6 +9,7 @@
   "api_base_url": "https://graph.facebook.com/v23.0",
   "auth_injection": { "kind": "bearer" },
   "sign": "appsecret_proof",
+  "media_download": true,
   "pkce": false,
   "auth_token_in_header": false,
   "client_id_env": "WHATSAPP_APP_ID",

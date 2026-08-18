@@ -11,12 +11,14 @@
 import express from "express";
 import { createProxyPipeline } from "./middleware.js";
 import { createForward } from "./forward.js";
+import { createMediaDownload } from "./media.js";
 
 export function createProxyRouter({ store, cryptoBox, registry, rateLimit }) {
   const router = express.Router();
   const { ipLimit, tokenLimit, authN, authZ, resolve, fresh, refreshConnection } =
     createProxyPipeline({ store, cryptoBox, registry, rateLimit });
   const forward = createForward({ cryptoBox, refreshConnection });
+  const mediaDownload = createMediaDownload({ cryptoBox });
 
   // GET /proxy/connections — machine-to-machine: lista conexões do usuário
   // autenticado via Bearer zwt_ (mesmo authN do proxy). Metadata only, sem
@@ -36,6 +38,21 @@ export function createProxyRouter({ store, cryptoBox, registry, rateLimit }) {
         metadata_json: undefined,
       })));
     }
+  );
+
+  // Download de mídia (Meta Cloud API): o binário do lookaside exige o token
+  // da Meta no header e o workspace só tem o zwt_ — este handler baixa com o
+  // token real e strema (token nunca sai do zkeys). Mesmo pipeline do forward;
+  // montado ANTES do catch-all pra rota específica vencer.
+  router.get(
+    "/p/:provider/media/:mediaId/download",
+    ipLimit,
+    authN,
+    tokenLimit,
+    authZ,
+    resolve,
+    fresh,
+    mediaDownload
   );
 
   router.all(
