@@ -19,8 +19,19 @@ import { hashToken } from "../lib/crypto.js";
 const GRAPH_BASE = "https://graph.facebook.com/v23.0";
 
 // Campos padrão pra WhatsApp Cloud API webhook.
+// Inclui os campos de ECHO (mensagens enviadas pela empresa):
+//   - smb_message_echoes: espelho das mensagens enviadas DO APP WhatsApp
+//     Business (coexistence) — sem ele o CRM nunca vê o lado "enviado".
+//   - message_echoes: eco clássico das mensagens enviadas via Cloud API.
+//   - history / smb_app_state_sync: demais campos que o onboarding de
+//     coexistência assina além de `messages` — mantê-los evita que um
+//     re-run do setup os remova da assinatura do app.
 const DEFAULT_FIELDS = [
   "messages",
+  "message_echoes",
+  "smb_message_echoes",
+  "smb_app_state_sync",
+  "history",
   "message_template_status_update",
   "message_template_quality_update",
 ].join(",");
