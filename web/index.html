@@ -256,7 +256,11 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 async function loadProviders() {
   providers = await (await api("/providers")).json();
   const sel = $("sel-provider");
-  sel.innerHTML = providers.map(p => `<option value="${p.name}">${p.displayName}</option>`).join("");
+  // Base alias (connectable:false) não vira conexão nova — some do seletor.
+  sel.innerHTML = providers
+    .filter((p) => p.connectable !== false)
+    .map((p) => `<option value="${p.name}">${p.displayName}</option>`)
+    .join("");
   sel.onchange = renderPacks;
   renderPacks();
 }

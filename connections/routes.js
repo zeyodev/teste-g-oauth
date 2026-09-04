@@ -14,12 +14,15 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
   const router = express.Router();
   const { requireSession } = sessions;
 
-  // Catálogo pra UI: providers habilitados + packs de scopes.
+  // Catálogo pra UI: providers habilitados + packs de scopes. `connectable:
+  // false` (base alias, ex: google-workspace-events) aparece no catálogo mas a
+  // UI não oferece o botão Conectar — não há OAuth próprio pra ele.
   router.get("/providers", requireSession, (_req, res) => {
     res.json(
       [...registry.values()].map((p) => ({
         name: p.name,
         displayName: p.config.displayName || p.name,
+        connectable: p.config.connectable !== false,
         packs: Object.entries(p.packs).map(([id, pk]) => ({
           id, label: pk.label, description: pk.description,
         })),
@@ -32,6 +35,13 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
   router.get("/auth/:provider/start", requireSession, (req, res) => {
     const provider = registry.get(req.params.provider);
     if (!provider) return res.status(404).send("provider desconhecido");
+    // Base alias não tem fluxo OAuth próprio — usa a conexão do provider dono.
+    if (provider.config.connectable === false) {
+      const owner = provider.config.connection_provider;
+      return res.status(400).send(
+        `provider ${provider.name} não é conectável — usa a conexão ${owner ?? "de outro provider"}`
+      );
+    }
     const pack = req.query.pack || Object.keys(provider.packs)[0];
     const packCfg = provider.packs[pack];
     if (!packCfg) return res.status(400).send(`pack desconhecido: ${pack}`);

@@ -103,18 +103,30 @@ export function createProxyPipeline({ store, cryptoBox, registry, rateLimit }) {
   // Passo 3 — resolve: connection default do (user, provider); seleção
   // explícita por ?account=<alias> ou header X-Zkeys-Account. Provider
   // desconhecido responde igual a não-conectado (404, não vaza catálogo).
+  //
+  // Base alias (`connection_provider`): o provider da URL é um host/API próprio
+  // (ex: google-workspace-events → workspaceevents.googleapis.com) mas a CONEXÃO
+  // OAuth vive em outro provider do mesmo client (ex: a conexão `google` — mesmo
+  // refresh_token e escopos já aprovados). authZ continua pelo nome da URL; o
+  // lookup de conexão (e o refresh dela) usa o provider DONO da conexão. O forward
+  // usa o provider da URL (api_base_url/auth_injection do alias).
   function resolve(req, res, next) {
     const providerName = req.params.provider;
     const provider = registry.get(providerName);
+    const connProviderName = provider?.config.connection_provider || providerName;
     const alias = req.query.account || req.headers["x-zkeys-account"];
     const connection = !provider
       ? null
       : alias
-        ? store.connections.findByAlias(req.zkeys.userId, providerName, String(alias))
-        : store.connections.findDefault(req.zkeys.userId, providerName);
+        ? store.connections.findByAlias(req.zkeys.userId, connProviderName, String(alias))
+        : store.connections.findDefault(req.zkeys.userId, connProviderName);
     if (!connection) {
+      const owner = provider?.config.connection_provider;
+      const label = owner
+        ? `${owner} (base do provider ${providerName})`
+        : providerName;
       return res.status(404).json({
-        error: `nenhuma conexão ${providerName}${alias ? ` com alias "${alias}"` : ""} — conecte no zkeys`,
+        error: `nenhuma conexão ${label}${alias ? ` com alias "${alias}"` : ""} — conecte no zkeys`,
       });
     }
     req.zkeys.provider = provider;

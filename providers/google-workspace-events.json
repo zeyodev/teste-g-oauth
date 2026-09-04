@@ -1,0 +1,24 @@
+{
+  "name": "google-workspace-events",
+  "displayName": "Google Workspace Events",
+  "icon": "google.svg",
+  "connectable": false,
+  "connection_provider": "google",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+  "token_url": "https://oauth2.googleapis.com/token",
+  "revoke_url": "https://oauth2.googleapis.com/revoke",
+  "profile_url": "https://www.googleapis.com/oauth2/v3/userinfo",
+  "profile_map": { "externalId": "sub", "email": "email", "name": "name", "picture": "picture" },
+  "api_base_url": "https://workspaceevents.googleapis.com",
+  "auth_injection": { "kind": "bearer" },
+  "pkce": false,
+  "client_id_env": "GOOGLE_CLIENT_ID",
+  "client_secret_env": "GOOGLE_CLIENT_SECRET",
+  "authorize_extra": {
+    "access_type": "offline",
+    "prompt": "consent",
+    "include_granted_scopes": "true"
+  },
+  "packs": {},
+  "extensions": []
+}
