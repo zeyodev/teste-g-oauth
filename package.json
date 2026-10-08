@@ -10,7 +10,7 @@
     "set-manual-token": "node scripts/set-manual-token.js",
     "migrate-envelope": "node scripts/migrate-envelope.js",
     "rotate-kek": "node scripts/rotate-kek.js",
-    "test": "node test/smoke.e2e.mjs && node test/proxy.e2e.mjs && node test/alias.e2e.mjs && node test/media.e2e.mjs && node test/tokens.e2e.mjs && node test/hardening.e2e.mjs && node test/webhook.e2e.mjs && node test/whatsapp.e2e.mjs",
+    "test": "node test/smoke.e2e.mjs && node test/forward-url.test.mjs && node test/proxy.e2e.mjs && node test/alias.e2e.mjs && node test/media.e2e.mjs && node test/tokens.e2e.mjs && node test/hardening.e2e.mjs && node test/webhook.e2e.mjs && node test/whatsapp.e2e.mjs",
     "test:proxy": "node test/proxy.e2e.mjs",
     "test:alias": "node test/alias.e2e.mjs",
     "test:media": "node test/media.e2e.mjs",
