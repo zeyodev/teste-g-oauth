@@ -189,6 +189,10 @@
       <p class="muted">Modo <code>invite</code>: gere um código e passe pra quem vai criar a conta. Válido até esgotar os usos ou expirar.</p>
       <div class="row">
         <div>
+          <label>email alvo (opcional — trava o convite a esse email)</label>
+          <input id="inv-email" type="email" placeholder="fulano@acme.dev">
+        </div>
+        <div>
           <label>usos (máx.)</label>
           <input id="inv-max" type="number" value="1" min="1" max="100">
         </div>
@@ -209,7 +213,7 @@
         <div style="flex:0"><button class="ghost" id="btn-copy-invite">copiar</button></div>
       </div>
       <table>
-        <thead><tr><th>código</th><th>nota</th><th>usos</th><th>expira</th><th>estado</th></tr></thead>
+        <thead><tr><th>código</th><th>email alvo</th><th>nota</th><th>usos</th><th>expira</th><th>estado</th></tr></thead>
         <tbody id="tbl-invites"></tbody>
       </table>
       <p class="muted" id="invites-empty" hidden>Nenhum convite gerado ainda.</p>
@@ -320,6 +324,14 @@ async function loadRegisterMode() {
 async function boot() {
   await loadRegisterMode();
   showPane("login");
+  // Deep-link do convite (?invite=CODE&email=…): o gerador (console ou shell
+  // da org) manda o link pronto — aqui abre o form de registro já preenchido.
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("invite") && registerInfo && registerInfo.mode !== "closed") {
+    showPane("register");
+    document.querySelector('#form-register [name="invite_code"]').value = qs.get("invite");
+    if (qs.get("email")) document.querySelector('#form-register [name="email"]').value = qs.get("email");
+  }
   const res = await fetch("/auth/me", { credentials: "same-origin" });
   if (!res.ok) return show("login");
   me = await res.json();
@@ -527,6 +539,7 @@ async function loadInvites() {
   $("tbl-invites").innerHTML = rows.map((c) => `
     <tr>
       <td style="font-family:monospace;font-size:.85em">${esc(c.code.slice(0, 14))}…</td>
+      <td class="muted">${esc(c.email_alvo || "—")}</td>
       <td class="muted">${esc(c.note || "—")}</td>
       <td class="muted">${c.uses}/${c.max_uses}</td>
       <td class="muted">${fmtDate(c.expires_at)}</td>
@@ -538,13 +551,16 @@ async function loadInvites() {
 $("btn-invite").addEventListener("click", async () => {
   $("invite-err").textContent = "";
   $("invite-reveal").hidden = true;
+  const email_alvo = $("inv-email").value.trim() || null;
   const max_uses = Number($("inv-max").value) || 1;
   const ttl_days = Number($("inv-ttl").value) || 7;
   const note = $("inv-note").value.trim() || null;
-  const res = await api("/auth/invites", { method: "POST", body: JSON.stringify({ max_uses, ttl_days, note }) });
+  const res = await api("/auth/invites", { method: "POST", body: JSON.stringify({ max_uses, ttl_days, note, email_alvo }) });
   if (!res.ok) { $("invite-err").textContent = (await res.json()).error || "erro ao gerar convite"; return; }
   const invite = await res.json();
-  $("invite-code").value = invite.code;
+  $("invite-code").value = invite.email_alvo
+    ? `${location.origin}/?invite=${encodeURIComponent(invite.code)}&email=${encodeURIComponent(invite.email_alvo)}`
+    : invite.code;
   $("invite-reveal").hidden = false;
   $("inv-note").value = "";
   loadInvites();

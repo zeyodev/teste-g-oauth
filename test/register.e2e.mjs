@@ -131,6 +131,32 @@ const post = (base, path, body, extra = {}) => fetch(`${base}${path}`, {
   assert.equal(rExp.status, 403);
   ok("convite expirado → 403");
 
+  // ── convite NOMINAL (email_alvo) ─────────────────────────────────────
+  const nom = await post(base, "/auth/invites", { email_alvo: "Nominal@Test.dev", note: "p/ fulano" }, csrf.headers());
+  assert.equal(nom.status, 201);
+  const nomBody = await nom.json();
+  assert.equal(nomBody.email_alvo, "nominal@test.dev");   // normalizado lowercase
+  assert.equal(nomBody.max_uses, 1);                       // nominal = single-use
+  ok("convite nominal cria com email normalizado + single-use");
+
+  // email_alvo inválido → 400
+  const nomBad = await post(base, "/auth/invites", { email_alvo: "não-email" }, csrf.headers());
+  assert.equal(nomBad.status, 400);
+  ok("convite com email_alvo inválido → 400");
+
+  // outro email tenta usar o convite nominal → 403 e o convite SOBRA
+  const wrong = await post(base, "/auth/register", { email: "outra@test.dev", password: "senha-forte-123", invite_code: nomBody.code });
+  assert.equal(wrong.status, 403);
+  assert.match((await wrong.json()).error, /nominal@test\.dev/);
+  assert.equal(store.inviteCodes.findActive(nomBody.code).uses, 0);
+  ok("convite nominal com outro email → 403 (convite preservado)");
+
+  // email certo → 201
+  const right = await post(base, "/auth/register", { email: "Nominal@Test.dev", password: "senha-forte-123", invite_code: nomBody.code });
+  assert.equal(right.status, 201);
+  assert.equal(store.inviteCodes.findActive(nomBody.code), null, "esgotado após uso");
+  ok("convite nominal com o email certo → 201 (single-use)");
+
   // modo invite NÃO registra (null) mesmo com banco com usuários: confere
   // que o gate é o modo, não a existência de convites
   assert.equal(config.registerMode, "invite");
@@ -154,6 +180,42 @@ const post = (base, path, body, extra = {}) => fetch(`${base}${path}`, {
   // sem token → 401
   assert.equal((await fetch(`${base}/proxy/providers`)).status, 401);
   ok("GET /proxy/providers sem token → 401");
+
+  // ── POST /proxy/invites (machine, dono admin) ────────────────────────
+  const mint = (body) => fetch(`${base}/proxy/invites`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${tok}` },
+    body: JSON.stringify(body),
+  });
+
+  // sem email_alvo → 400
+  assert.equal((await mint({})).status, 400);
+  // com email_alvo → 201
+  const minted = await mint({ email_alvo: "Cliente@Org.dev", note: "org acme via shell" });
+  assert.equal(minted.status, 201);
+  const mintedBody = await minted.json();
+  assert.equal(mintedBody.email_alvo, "cliente@org.dev");
+  assert.ok(mintedBody.code.startsWith("zkinv_"));
+  ok("POST /proxy/invites (zwt_ de admin) → 201 nominal");
+
+  // convite mintado vale no registro
+  const viaProxy = await post(base, "/auth/register", { email: "cliente@org.dev", password: "senha-forte-123", invite_code: mintedBody.code });
+  assert.equal(viaProxy.status, 201);
+  ok("registro com convite mintado via /proxy/invites → 201");
+
+  // token de NÃO-admin → 403 (mesma rota, dono user comum)
+  const tokUser = `zwt_${crypto.randomBytes(32).toString("base64url")}`;
+  store.workspaceTokens.create({
+    userId: me2.id, name: "nao-admin", tokenHash: hashToken(tokUser),
+    scopesJson: JSON.stringify(["*"]),
+  });
+  const mintUser = await fetch(`${base}/proxy/invites`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${tokUser}` },
+    body: JSON.stringify({ email_alvo: "x@y.dev" }),
+  });
+  assert.equal(mintUser.status, 403);
+  ok("POST /proxy/invites com zwt_ de não-admin → 403");
 }
 
 // ══ App B: modo closed (default) ═════════════════════════════════════════

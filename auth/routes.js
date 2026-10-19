@@ -93,13 +93,22 @@ export function createAuthRoutes({ store, passwords, sessions, rateLimit, csrf, 
       store.audit("register.ratelimited", { detail: `ip:${req.ip}` });
       return tooMany(res, ipHit);
     }
-    // invite: valida SEM consumir (não queima código se o email já existe);
-    // o consumo atômico (esgotado/expirado/corrida) acontece no fim.
+    // invite: valida SEM consumir (não queima código se o email já existe ou
+    // não bate com o email_alvo); o consumo atômico acontece no fim.
+    let invite = null;
     if (mode === "invite") {
-      if (!invite_code || !store.inviteCodes.findActive(invite_code)) {
+      invite = invite_code ? store.inviteCodes.findActive(invite_code) : null;
+      if (!invite) {
         rateLimit.check(`email:${normEmail}`);
         store.audit("register.fail", { detail: `convite inválido (${normEmail})` });
         return res.status(403).json({ error: "código de convite inválido, esgotado ou expirado" });
+      }
+      // Vínculo nominal: convite gerado pra um email só vale pra ele — o
+      // código vazar não deixa estranho criar conta.
+      if (invite.email_alvo && invite.email_alvo !== normEmail) {
+        rateLimit.check(`email:${normEmail}`);
+        store.audit("register.fail", { detail: `convite nominal usado com outro email (${normEmail} ≠ ${invite.email_alvo})` });
+        return res.status(403).json({ error: `este convite é válido só para ${invite.email_alvo} — use o email pra quem ele foi gerado` });
       }
     }
     if (store.users.findByEmail(normEmail)) {
@@ -126,6 +135,7 @@ export function createAuthRoutes({ store, passwords, sessions, rateLimit, csrf, 
     res.json(store.inviteCodes.list().map((c) => ({
       code: c.code,
       note: c.note,
+      email_alvo: c.email_alvo,
       uses: c.uses,
       max_uses: c.max_uses,
       expires_at: c.expires_at,
@@ -135,7 +145,17 @@ export function createAuthRoutes({ store, passwords, sessions, rateLimit, csrf, 
   });
 
   router.post("/auth/invites", requireAdmin, csrf.require, (req, res) => {
-    const { note = null, max_uses = 1, ttl_days = 7 } = req.body || {};
+    const { note = null, email_alvo = null, ttl_days = 7 } = req.body || {};
+    let { max_uses = 1 } = req.body || {};
+    let alvo = null;
+    if (email_alvo != null && email_alvo !== "") {
+      alvo = String(email_alvo).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(alvo)) {
+        return res.status(400).json({ error: "email_alvo: email inválido" });
+      }
+      // Nominal = single-use (a UI nem mostra max_uses nesse caso).
+      max_uses = 1;
+    }
     if (max_uses != null && (!Number.isInteger(max_uses) || max_uses < 1 || max_uses > 100)) {
       return res.status(400).json({ error: "max_uses: inteiro 1–100" });
     }
@@ -145,12 +165,13 @@ export function createAuthRoutes({ store, passwords, sessions, rateLimit, csrf, 
     const invite = store.inviteCodes.create({
       createdBy: req.user.id,
       note: note ? String(note).slice(0, 200) : null,
+      emailAlvo: alvo,
       maxUses: max_uses,
       ttlDays: ttl_days,
     });
     store.audit("invite.create", {
       userId: req.user.id,
-      detail: `${invite.code.slice(0, 10)}… (uses≤${invite.max_uses}, exp ${invite.expires_at ?? "nunca"})`,
+      detail: `${invite.code.slice(0, 10)}… (uses≤${invite.max_uses}${alvo ? ` p/ ${alvo}` : ""}, exp ${invite.expires_at ?? "nunca"})`,
     });
     res.status(201).json(invite);
   });
