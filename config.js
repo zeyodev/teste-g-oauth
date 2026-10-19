@@ -57,6 +57,12 @@ export function loadConfig(env = process.env) {
     // o IP real vem do X-Forwarded-For. Default 1 = confia UM hop (o tunnel).
     // Aceita número (n hops), "true"/"false" ou string (ex: "loopback").
     trustProxy: parseTrustProxy(env.ZKEYS_TRUST_PROXY),
+    // Registro (§7): closed = plataforma fechada (default, retrocompatível);
+    // invite = self-serve com código de convite gerado por admin;
+    // open = registro aberto (rate-limited). Em QUALQUER modo, banco sem
+    // nenhum usuário aceita o primeiro registro como admin (bootstrap web —
+    // mata o cold-start do scripts/create-user.js via SSH).
+    registerMode: (env.ZKEYS_REGISTER_MODE || "closed").toLowerCase(),
     // Rate limit in-memory (§9). Login: anti-brute-force por IP e por email.
     // Proxy: anti-abuso por IP (pré-authN) e por token id (pós-authN).
     // Single-process (1 host); escala horizontal exigiria store compartilhado.

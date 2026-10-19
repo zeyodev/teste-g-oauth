@@ -20,6 +20,30 @@ export function createProxyRouter({ store, cryptoBox, registry, rateLimit }) {
   const forward = createForward({ cryptoBox, refreshConnection });
   const mediaDownload = createMediaDownload({ cryptoBox });
 
+  // GET /proxy/providers — machine-to-machine: catálogo de providers com o
+  // MESMO shape do /providers (sessão), mas autenticado por Bearer zwt_. Fecha
+  // o gap pra UIs do workspace (ex: página zkeys do shell do agente) montarem
+  // "disponíveis pra conectar" sem hardcode — provider novo no registry
+  // aparece sozinho (OCP). Sem fluxo OAuth aqui: conectar segue no console.
+  router.get(
+    "/proxy/providers",
+    ipLimit,
+    authN,
+    tokenLimit,
+    (_req, res) => {
+      res.json(
+        [...registry.values()].map((p) => ({
+          name: p.name,
+          displayName: p.config.displayName || p.name,
+          connectable: p.config.connectable !== false,
+          packs: Object.entries(p.packs).map(([id, pk]) => ({
+            id, label: pk.label, description: pk.description,
+          })),
+        }))
+      );
+    }
+  );
+
   // GET /proxy/connections — machine-to-machine: lista conexões do usuário
   // autenticado via Bearer zwt_ (mesmo authN do proxy). Metadata only, sem
   // tokens. Fecha o gap DESIGN-zkeys §11 ("agente descobre via GET /connections").

@@ -82,17 +82,39 @@
     </div>
   </header>
 
-  <!-- Login -->
+  <!-- Login / Registro (§7: ZKEYS_REGISTER_MODE invite|open; closed esconde) -->
   <div class="card" id="view-login" hidden>
-    <h2>Entrar</h2>
-    <form id="form-login">
-      <label>email</label>
-      <input name="email" type="email" required autocomplete="username">
-      <label>senha</label>
-      <input name="password" type="password" required autocomplete="current-password">
-      <button type="submit">Entrar</button>
-      <div class="err" id="login-err"></div>
-    </form>
+    <div id="pane-login">
+      <h2>Entrar</h2>
+      <form id="form-login">
+        <label>email</label>
+        <input name="email" type="email" required autocomplete="username">
+        <label>senha</label>
+        <input name="password" type="password" required autocomplete="current-password">
+        <button type="submit">Entrar</button>
+        <div class="err" id="login-err"></div>
+      </form>
+    </div>
+    <div id="pane-register" hidden>
+      <h2>Criar conta</h2>
+      <p class="muted" id="register-hint"></p>
+      <form id="form-register">
+        <label>email</label>
+        <input name="email" type="email" required autocomplete="username">
+        <label>senha (mín. 8)</label>
+        <input name="password" type="password" minlength="8" required autocomplete="new-password">
+        <div id="field-invite" hidden>
+          <label>código de convite</label>
+          <input name="invite_code" placeholder="zkinv_…" autocomplete="off">
+        </div>
+        <button type="submit">Criar conta e entrar</button>
+        <div class="err" id="register-err"></div>
+      </form>
+    </div>
+    <p class="muted" style="margin-top:14px">
+      <a href="#" id="link-register" hidden>não tem conta? criar conta →</a>
+      <a href="#" id="link-login" hidden>← voltar pro login</a>
+    </p>
   </div>
 
   <!-- App -->
@@ -159,6 +181,38 @@
         <tbody id="tbl-tokens"></tbody>
       </table>
       <p class="muted" id="tokens-empty" hidden>Nenhum token ainda — gere um acima e salve como secret ZKEYS_TOKEN no workspace.</p>
+    </div>
+
+    <!-- Convites (só admin, modo invite) -->
+    <div class="card" id="card-invites" hidden>
+      <h2>Convites</h2>
+      <p class="muted">Modo <code>invite</code>: gere um código e passe pra quem vai criar a conta. Válido até esgotar os usos ou expirar.</p>
+      <div class="row">
+        <div>
+          <label>usos (máx.)</label>
+          <input id="inv-max" type="number" value="1" min="1" max="100">
+        </div>
+        <div>
+          <label>validade (dias)</label>
+          <input id="inv-ttl" type="number" value="7" min="1" max="90">
+        </div>
+        <div>
+          <label>nota (pra quem?)</label>
+          <input id="inv-note" placeholder="ex: org zeyo">
+        </div>
+        <div style="flex:0"><button id="btn-invite">Gerar</button></div>
+      </div>
+      <div class="err" id="invite-err"></div>
+      <!-- Revelado UMA vez logo após gerar. -->
+      <div class="row" id="invite-reveal" hidden style="margin-top:16px;border:1px solid var(--accent);border-radius:var(--radius);padding:12px">
+        <div><input id="invite-code" readonly onclick="this.select()"></div>
+        <div style="flex:0"><button class="ghost" id="btn-copy-invite">copiar</button></div>
+      </div>
+      <table>
+        <thead><tr><th>código</th><th>nota</th><th>usos</th><th>expira</th><th>estado</th></tr></thead>
+        <tbody id="tbl-invites"></tbody>
+      </table>
+      <p class="muted" id="invites-empty" hidden>Nenhum convite gerado ainda.</p>
     </div>
 
     <!-- Usuários (só admin) -->
@@ -231,6 +285,7 @@ const api = async (path, opts = {}) => {
 
 let providers = [];
 let me = null;
+let registerInfo = null;   // GET /auth/register-mode → {mode, invite_required, first_user}
 
 function show(view) {
   $("view-login").hidden = view !== "login";
@@ -238,16 +293,46 @@ function show(view) {
   $("who").hidden = view !== "app";
 }
 
+// Painel login ⇄ registro (o link só existe se o modo permite).
+function showPane(pane) {
+  $("pane-login").hidden = pane !== "login";
+  $("pane-register").hidden = pane !== "register";
+  $("link-register").hidden = pane !== "login" || !registerInfo || registerInfo.mode === "closed";
+  $("link-login").hidden = pane !== "register";
+  $("login-err").textContent = "";
+  $("register-err").textContent = "";
+}
+
+async function loadRegisterMode() {
+  try { registerInfo = await (await fetch("/auth/register-mode")).json(); }
+  catch { registerInfo = null; }
+  const p = $("register-hint");
+  if (registerInfo?.first_user) {
+    p.textContent = "Primeiro usuário do cofre — a conta será criada como admin.";
+  } else if (registerInfo?.invite_required) {
+    p.textContent = "Plataforma por convite — peça um código ao administrador.";
+  } else {
+    p.textContent = "";
+  }
+  $("field-invite").hidden = !registerInfo?.invite_required;
+}
+
 async function boot() {
+  await loadRegisterMode();
+  showPane("login");
   const res = await fetch("/auth/me", { credentials: "same-origin" });
   if (!res.ok) return show("login");
   me = await res.json();
   $("who-email").textContent = me.email;
   $("card-users").hidden = me.role !== "admin";   // card admin só pra role admin
+  $("card-invites").hidden = me.role !== "admin" || !registerInfo?.invite_required;
   show("app");
   // Garante o cookie CSRF antes de qualquer mutação (double-submit).
   await fetch("/auth/csrf", { credentials: "same-origin" });
-  await Promise.all([loadProviders(), loadConnections(), loadTokens(), loadAudit()]);
+  await Promise.all([
+    loadProviders(), loadConnections(), loadTokens(), loadAudit(),
+    ...($("card-invites").hidden ? [] : [loadInvites()]),
+  ]);
 }
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("pt-BR") : "—");
@@ -374,6 +459,10 @@ const AUDIT_LABELS = {
   "proxy.deny": "proxy negado (escopo)",
   "proxy.ratelimited": "proxy bloqueado (rate limit)",
   "user.create": "criou usuário",
+  "user.register": "criou conta (registro)",
+  "register.fail": "falha de registro",
+  "register.ratelimited": "registro bloqueado (rate limit)",
+  "invite.create": "gerou convite",
 };
 
 async function loadAudit() {
@@ -401,6 +490,73 @@ $("btn-user").addEventListener("click", async () => {
   $("usr-pass").value = "";
   toast(`Usuário ${email} criado.`);
   loadAudit();
+});
+
+// ── Registro self-serve (§7) ───────────────────────────────────────
+$("link-register").addEventListener("click", (ev) => { ev.preventDefault(); showPane("register"); });
+$("link-login").addEventListener("click", (ev) => { ev.preventDefault(); showPane("login"); });
+
+$("form-register").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("register-err").textContent = "";
+  const fd = new FormData(ev.target);
+  const body = { email: fd.get("email"), password: fd.get("password") };
+  if (registerInfo?.invite_required) body.invite_code = String(fd.get("invite_code") || "").trim();
+  const res = await fetch("/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = (await res.json().catch(() => ({}))).error || "erro no registro";
+    if (res.status === 429) {
+      const s = res.headers.get("retry-after");
+      if (s) msg = `Muitas tentativas — tente em ${s}s.`;
+    }
+    $("register-err").textContent = msg;
+    return;
+  }
+  boot();   // já entra logado (o register emite a sessão)
+});
+
+// ── Convites (admin, modo invite) ────────────────────────────────
+async function loadInvites() {
+  const rows = await (await api("/auth/invites")).json();
+  $("invites-empty").hidden = rows.length > 0;
+  $("tbl-invites").innerHTML = rows.map((c) => `
+    <tr>
+      <td style="font-family:monospace;font-size:.85em">${esc(c.code.slice(0, 14))}…</td>
+      <td class="muted">${esc(c.note || "—")}</td>
+      <td class="muted">${c.uses}/${c.max_uses}</td>
+      <td class="muted">${fmtDate(c.expires_at)}</td>
+      <td>${c.active ? '<span class="badge">ativo</span>' : '<span class="muted">' +
+        (c.uses >= c.max_uses ? "esgotado" : "expirado") + '</span>'}</td>
+    </tr>`).join("");
+}
+
+$("btn-invite").addEventListener("click", async () => {
+  $("invite-err").textContent = "";
+  $("invite-reveal").hidden = true;
+  const max_uses = Number($("inv-max").value) || 1;
+  const ttl_days = Number($("inv-ttl").value) || 7;
+  const note = $("inv-note").value.trim() || null;
+  const res = await api("/auth/invites", { method: "POST", body: JSON.stringify({ max_uses, ttl_days, note }) });
+  if (!res.ok) { $("invite-err").textContent = (await res.json()).error || "erro ao gerar convite"; return; }
+  const invite = await res.json();
+  $("invite-code").value = invite.code;
+  $("invite-reveal").hidden = false;
+  $("inv-note").value = "";
+  loadInvites();
+  loadAudit();
+});
+
+$("btn-copy-invite").addEventListener("click", async () => {
+  const el = $("invite-code");
+  el.select();
+  try { await navigator.clipboard.writeText(el.value); } catch { document.execCommand("copy"); }
+  $("btn-copy-invite").textContent = "copiado ✓";
+  setTimeout(() => ($("btn-copy-invite").textContent = "copiar"), 1500);
 });
 
 $("form-login").addEventListener("submit", async (ev) => {

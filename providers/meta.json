@@ -22,6 +22,19 @@
   "authorize_extra_env": {
     "config_id": "META_APP_CONFIG"
   },
+  "long_lived_exchange": {
+    "url": "https://graph.facebook.com/v23.0/oauth/access_token",
+    "grant_type": "fb_exchange_token",
+    "token_param": "fb_exchange_token",
+    "send_client_id": true
+  },
+  "self_refresh": {
+    "url": "https://graph.facebook.com/v23.0/oauth/access_token",
+    "grant_type": "fb_exchange_token",
+    "token_param": "fb_exchange_token",
+    "send_client_id": true
+  },
+  "page_token_refresh": { "fields": "access_token" },
   "packs": {
     "ads": {
       "label": "Meta Ads + Business",
@@ -38,6 +51,17 @@
         "instagram_basic",
         "instagram_content_publish"
       ]
+    },
+    "instagram_insights": {
+      "label": "Instagram Insights",
+      "description": "Métricas de contas Instagram de negócio (impressões, alcance, engajamento). Uma conexão por página com Instagram.",
+      "scopes": [
+        "pages_show_list",
+        "pages_read_engagement",
+        "instagram_basic",
+        "instagram_manage_insights"
+      ],
+      "account_discovery": { "kind": "instagram" }
     }
   },
   "extensions": ["meta_signed_request"]

@@ -66,7 +66,7 @@ export function createApp(config) {
   app.get("/healthz", (_req, res) => res.json({ ok: true, providers: [...registry.keys()] }));
   app.get("/auth/csrf", sessions.requireSession, csrf.token);
 
-  app.use(createAuthRoutes({ store, passwords, sessions, rateLimit: loginLimiter, csrf }));
+  app.use(createAuthRoutes({ store, passwords, sessions, rateLimit: loginLimiter, csrf, registerMode: config.registerMode }));
   app.use(createWorkspaceTokenRoutes({ store, sessions, csrf }));
   app.use(createWhatsAppSetupRoutes({ store, cryptoBox, registry }));
   app.use(createConnectionRoutes({

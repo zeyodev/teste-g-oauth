@@ -64,6 +64,24 @@ export default class OAuth2Provider {
     return this.config.packs || {};
   }
 
+  // Pack-aware discovery config: pack-level account_discovery cai de volta
+  // pro provider-level (ex: whatsapp.json declara account_discovery no
+  // provider, não no pack). Retorna null se nenhum configurar descoberta.
+  _discoveryConfig(packId) {
+    return this.config.packs?.[packId]?.account_discovery
+      ?? this.config.account_discovery ?? null;
+  }
+
+  // Fetch + parse JSON, throw com label legível em caso de erro.
+  async _graphGet(url, label) {
+    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = {}; }
+    if (!resp.ok) throw new Error(`${label} ${resp.status}: ${text.slice(0, 200)}`);
+    return data;
+  }
+
   authorizeUrl({ state, scopes, codeChallenge = null, extra = {} }) {
     const params = new URLSearchParams({
       response_type: "code",
@@ -219,18 +237,26 @@ export default class OAuth2Provider {
     return crypto.createHmac("sha256", this.clientSecret).update(String(accessToken)).digest("hex");
   }
 
+  // debug_token: inspeciona um token (usuário/página) com as credenciais do
+  // app. Retorna data.data (campos: app_id, type, expires_at, granular_scopes,
+  // etc.). appsecret_proof quando sign exige (Meta family).
+  async _debugToken(inputToken) {
+    const url = new URL(`${this.config.api_base_url}/debug_token`);
+    url.searchParams.set("input_token", inputToken);
+    url.searchParams.set("access_token", this._appAccessToken());
+    if (this.config.sign === "appsecret_proof") {
+      url.searchParams.set("appsecret_proof", this._appsecretProof(inputToken));
+    }
+    const data = await this._graphGet(url, "debug_token");
+    return data?.data ?? null;
+  }
+
   // debug_token → granular_scopes[].target_ids: os IDs de WABA que o token
   // enxerga sob o scope de management. Pega o primeiro do scope pedido (fallback:
   // primeiro scope que traga target_ids).
   async _discoverWabaId(accessToken, scopeName) {
-    const url = new URL(`${this.config.api_base_url}/debug_token`);
-    url.searchParams.set("input_token", accessToken);
-    url.searchParams.set("access_token", this._appAccessToken());
-    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
-    const text = await resp.text();
-    let data; try { data = JSON.parse(text); } catch { data = {}; }
-    if (!resp.ok) throw new Error(`debug_token ${resp.status}: ${text.slice(0, 200)}`);
-    const gs = data?.data?.granular_scopes || [];
+    const dd = await this._debugToken(accessToken);
+    const gs = dd?.granular_scopes || [];
     const match =
       gs.find((g) => g.scope === scopeName && g.target_ids?.length) ||
       gs.find((g) => Array.isArray(g.target_ids) && g.target_ids.length);
@@ -246,10 +272,7 @@ export default class OAuth2Provider {
     if (this.config.sign === "appsecret_proof") {
       url.searchParams.set("appsecret_proof", this._appsecretProof(accessToken));
     }
-    const resp = await fetch(url.toString(), { headers: { accept: "application/json" } });
-    const text = await resp.text();
-    let data; try { data = JSON.parse(text); } catch { data = {}; }
-    if (!resp.ok) throw new Error(`phone_numbers ${resp.status}: ${text.slice(0, 200)}`);
+    const data = await this._graphGet(url, "phone_numbers");
     const n = Array.isArray(data?.data) ? data.data[0] : null;
     if (!n) return null;
     return {
@@ -259,8 +282,29 @@ export default class OAuth2Provider {
     };
   }
 
-  async refreshTokens({ refreshToken }) {
+  async refreshTokens({ refreshToken, connection = null }) {
     if (!refreshToken) throw new Error("refresh_token ausente");
+    // Page Access Token: re-busca com o User Token (refresh_token_enc).
+    // O User Token long-lived é usado pra obter um Page Token fresco do
+    // endpoint /{page_id}?fields=access_token. O refreshToken aqui É o
+    // User Token (armazenado como refresh_token_enc na conexão de página).
+    if (this.config.page_token_refresh && connection) {
+      let meta;
+      try { meta = connection.metadata_json ? JSON.parse(connection.metadata_json) : {}; } catch { meta = {}; }
+      if (meta.page_id) {
+        const fresh = await this._refreshPageToken(refreshToken, meta.page_id);
+        // Tenta descobrir o expires_at real via debug_token; fallback ~60d
+        let expiresIn = 60 * 24 * 3600;
+        try {
+          const diag = await this._debugToken(fresh);
+          if (diag?.expires_at) {
+            expiresIn = Math.max(60, diag.expires_at - Math.floor(Date.now() / 1000));
+          }
+        } catch { /* debug_token é best-effort */ }
+        // refreshToken: null → COALESCE do store preserva o User Token
+        return { accessToken: fresh, refreshToken: null, expiresIn };
+      }
+    }
     // self_refresh: provider sem refresh_token dedicado renova o próprio
     // access token (ex: Instagram clássico usa ig_refresh_token; Facebook usa
     // fb_exchange_token com o long-lived como token). Config define token_param
@@ -297,7 +341,14 @@ export default class OAuth2Provider {
     };
   }
 
-  async revokeTokens({ accessToken, refreshToken }) {
+  async revokeTokens({ accessToken, refreshToken, connection = null }) {
+    // Page connection: não há endpoint pra revogar só o token da página;
+    // DELETE /me/permissions com o User Token (refresh) derrubaria TODAS as
+    // conexões de página da mesma OAuth. Soft-delete: remove a linha, o token
+    // da página expira sozinho em ~60d.
+    let meta;
+    try { meta = connection?.metadata_json ? JSON.parse(connection.metadata_json) : {}; } catch { meta = {}; }
+    if (meta.page_id) return { ok: true, skipped: true, reason: "page-token — soft-delete" };
     if (!this.config.revoke_url) return { ok: true, skipped: true };
     const method = (this.config.revoke_method || "POST").toUpperCase();
     const url = new URL(this.config.revoke_url);
@@ -317,6 +368,70 @@ export default class OAuth2Provider {
     }
     const resp = await fetch(url.toString(), { method, headers, body });
     return { ok: resp.ok, status: resp.status };
+  }
+
+  // Plural: pack-aware, retorna array (ou null p/ cair no fallback single).
+  // O callback itera sobre o array e cria uma conexão por item.
+  async discoverAccounts(accessToken, packId) {
+    const cfg = this._discoveryConfig(packId);
+    if (!cfg) return null;                          // provider/pack sem descoberta
+    if (cfg.kind === "instagram") return this._discoverInstagramPages(accessToken);
+    // WhatsApp e futuros: fallback singular (compatibilidade)
+    const one = await this.discoverAccount(accessToken);
+    return one ? [one] : null;
+  }
+
+  // GET /me/accounts → filtra páginas com instagram_business_account → troca
+  // cada Page Token por long-lived → retorna array (vazio = sem páginas IG).
+  async _discoverInstagramPages(userToken) {
+    const url = new URL(`${this.config.api_base_url}/me/accounts`);
+    url.searchParams.set("access_token", userToken);
+    url.searchParams.set("fields", "id,name,category,access_token,instagram_business_account{id,username,name}");
+    if (this.config.sign === "appsecret_proof") {
+      url.searchParams.set("appsecret_proof", this._appsecretProof(userToken));
+    }
+    const data = await this._graphGet(url, "me/accounts");
+    const out = [];
+    for (const page of (data?.data || [])) {
+      const ig = page.instagram_business_account;
+      if (!ig?.id || !page.access_token) continue;      // página sem IG business → pula
+      try {
+        const ll = await this._longLivedExchange(page.access_token); // fb_exchange_token
+        out.push({
+          externalId: ig.id,                            // ig_business_account_id = account_key
+          name: page.name,
+          metadata: {
+            page_id: page.id,
+            page_name: page.name,
+            page_category: page.category || null,
+            ig_business_account_id: ig.id,
+            ig_username: ig.username || null,
+          },
+          accessToken: ll.accessToken,                  // Page Token long-lived
+          expiresIn: ll.expiresIn,
+        });
+      } catch (e) {
+        console.warn(`[zkeys/${this.name}] página ${page.id} sem long-lived exchange:`, e.message);
+      }
+    }
+    return out;
+  }
+
+  // GET /{page_id}?fields=access_token usando o User Token (refresh_token_enc)
+  // → devolve um Page Token fresco (long-lived ~60d, padrão Meta documentado).
+  async _refreshPageToken(userToken, pageId) {
+    const url = new URL(`${this.config.api_base_url}/${encodeURIComponent(pageId)}`);
+    const fields = this.config.page_token_refresh?.fields || "access_token";
+    url.searchParams.set("fields", fields);
+    url.searchParams.set("access_token", userToken);
+    if (this.config.sign === "appsecret_proof") {
+      url.searchParams.set("appsecret_proof", this._appsecretProof(userToken));
+    }
+    const data = await this._graphGet(url, `page ${pageId} access_token`);
+    if (!data.access_token) {
+      throw new Error(`page ${pageId} não retornou access_token`);
+    }
+    return data.access_token;
   }
 
   // Hooks por-provider (Strategy, §6): rotas extras declaradas em

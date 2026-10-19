@@ -94,54 +94,99 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
       } catch (e) {
         console.warn(`[zkeys/${provider.name}] profile fetch falhou:`, e.message);
       }
-      // Descoberta de conta (WhatsApp ES): resolve waba_id + phone_number_id via
-      // Graph, já que sem o SDK não há evento WA_EMBEDDED_SIGNUP. Best-effort —
-      // se falhar, cai no profile normal e a conexão ainda é gravada.
-      let discovered = null;
-      try {
-        discovered = await provider.discoverAccount?.(tokens.accessToken);
-      } catch (e) {
-        console.warn(`[zkeys/${provider.name}] discoverAccount falhou:`, e.message);
-      }
-      // Dedup por conta: waba_id descoberto > externalId do perfil > email > fixa.
-      const accountKey = String(discovered?.externalId ?? profile.externalId ?? profile.email ?? "default");
-      const displayName = discovered?.name ?? profile.name ?? null;
-      const metadataJson = discovered?.metadata ? JSON.stringify(discovered.metadata) : null;
       const scopes = tokens.scope ?? provider.packs[st.pack]?.scopes ?? [];
-      // Envelope (§8): reconexão da MESMA conta reusa o DEK da linha (senão o
-      // refresh preservado pelo COALESCE do upsert ficaria com DEK divergente);
-      // conta nova sorteia um DEK fresco.
-      const existing = store.connections.findByAccount(st.user_id, provider.name, accountKey);
-      const box = existing ? cryptoBox.openConnection(existing) : cryptoBox.newConnection();
-      const conn = store.connections.upsert({
-        userId: st.user_id,
-        provider: provider.name,
-        accountKey,
-        email: profile.email ?? null,
-        // Rótulo humano do provider (username/nome/número) — a UI mostra no lugar
-        // do account_key cru. Ex: "agentemetaorg" ou o display_phone_number do WA.
-        displayName,
-        // Metadata não-secreta descoberta no connect (WhatsApp: waba_id +
-        // phone_number_id + display_phone_number). NULL pros demais providers.
-        metadataJson,
-        scopesJson: JSON.stringify(scopes),
-        accessTokenEnc: box.encrypt(tokens.accessToken),
-        refreshTokenEnc: tokens.refreshToken ? box.encrypt(tokens.refreshToken) : null,
-        dekWrapped: box.dekWrapped,
-        expiresAt: tokens.expiresIn
-          ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
-          : null,
-      });
-      store.audit("connection.connect", {
-        userId: st.user_id,
-        provider: provider.name,
-        detail: conn.email || accountKey,
-      });
-      const asWho = profile.email || discovered?.name;
-      res.send(popupHtml({
-        ok: true,
-        message: `Conectado${asWho ? ` como ${asWho}` : ""} — pode fechar esta janela`,
-      }));
+      const userRefreshToken = tokens.refreshToken || tokens.accessToken; // User Token = seed de refresh
+
+      // Descoberta plural (pack-aware): Instagram retorna array de páginas;
+      // WhatsApp cai de volta via discoverAccount singular. Best-effort —
+      // se falhar, cai no profile normal e a conexão ainda é gravada.
+      let discoveredList = null;   // null = sem descoberta; [] = sem páginas IG; [...] = conexões
+      try {
+        discoveredList = await provider.discoverAccounts?.(tokens.accessToken, st.pack) ?? null;
+      } catch (e) {
+        console.warn(`[zkeys/${provider.name}] discoverAccounts falhou:`, e.message);
+      }
+
+      // Helper: persiste UMA conexão cifrada e retorna a row.
+      const upsertOne = ({ externalId, name = null, metadata = null,
+                           accessToken = tokens.accessToken,
+                           refreshToken = userRefreshToken,
+                           email = profile.email ?? null }) => {
+        const accountKey = String(externalId ?? profile.externalId ?? email ?? "default");
+        const displayName = name ?? profile.name ?? null;
+        const metadataJson = metadata ? JSON.stringify(metadata) : null;
+        const existing = store.connections.findByAccount(st.user_id, provider.name, accountKey);
+        const box = existing ? cryptoBox.openConnection(existing) : cryptoBox.newConnection();
+        const conn = store.connections.upsert({
+          userId: st.user_id,
+          provider: provider.name,
+          accountKey,
+          email,
+          displayName,
+          metadataJson,
+          scopesJson: JSON.stringify(scopes),
+          accessTokenEnc: box.encrypt(accessToken),
+          refreshTokenEnc: refreshToken ? box.encrypt(refreshToken) : null,
+          dekWrapped: box.dekWrapped,
+          expiresAt: tokens.expiresIn
+            ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
+            : null,
+        });
+        store.audit("connection.connect", {
+          userId: st.user_id,
+          provider: provider.name,
+          detail: conn.email || accountKey,
+        });
+        return conn;
+      };
+
+      if (Array.isArray(discoveredList)) {
+        // Instagram: N conexões (uma por página com IG Business Account).
+        if (discoveredList.length === 0) {
+          return res.send(popupHtml({
+            ok: false,
+            message: "Nenhuma página com conta Instagram de negócio encontrada. "
+              + "Confira se a página está vinculada a um Instagram Business Account.",
+          }));
+        }
+        for (const d of discoveredList) {
+          const isPageToken = d.accessToken != null;
+          upsertOne({
+            externalId: d.externalId,
+            name: d.name,
+            metadata: d.metadata,
+            accessToken: d.accessToken ?? tokens.accessToken,
+            // Page Token = accessToken; User Token = refreshToken (seed do _refreshPageToken)
+            refreshToken: isPageToken ? userRefreshToken : null,
+          });
+        }
+        const names = discoveredList.map((d) => d.name).filter(Boolean);
+        res.send(popupHtml({
+          ok: true,
+          message: `Conectado${names.length ? `: ${names.slice(0, 4).join(", ")}` + (names.length > 4 ? ` e mais ${names.length - 4}` : "") : ""} — pode fechar esta janela`,
+        }));
+      } else {
+        // Caminho legado (WhatsApp e providers sem account_discovery).
+        let discovered = null;
+        try {
+          discovered = await provider.discoverAccount?.(tokens.accessToken);
+        } catch (e) {
+          console.warn(`[zkeys/${provider.name}] discoverAccount falhou:`, e.message);
+        }
+        upsertOne({
+          externalId: discovered?.externalId ?? profile.externalId ?? profile.email ?? "default",
+          name: discovered?.name ?? profile.name ?? null,
+          metadata: discovered?.metadata ?? null,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          email: profile.email ?? null,
+        });
+        const asWho = profile.email || discovered?.name;
+        res.send(popupHtml({
+          ok: true,
+          message: `Conectado${asWho ? ` como ${asWho}` : ""} — pode fechar esta janela`,
+        }));
+      }
     } catch (e) {
       console.error(`[zkeys/${provider.name}] callback erro:`, e);
       res.status(500).send(popupHtml({ ok: false, message: e.message }));
@@ -189,6 +234,7 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
         await provider.revokeTokens({
           accessToken: box.decrypt(conn.access_token_enc),
           refreshToken: box.decrypt(conn.refresh_token_enc),
+          connection: conn,
         });
       } catch (e) {
         console.warn(`[zkeys/${conn.provider}] revoke no provider falhou (removendo mesmo assim):`, e.message);

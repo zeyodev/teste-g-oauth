@@ -55,7 +55,7 @@ export function createProxyPipeline({ store, cryptoBox, registry, rateLimit }) {
       const box = cryptoBox.openConnection(connection);
       const refreshToken = box.decrypt(connection.refresh_token_enc);
       if (!refreshToken) throw new Error("connection sem refresh_token — precisa re-OAuth");
-      const t = await provider.refreshTokens({ refreshToken });
+      const t = await provider.refreshTokens({ refreshToken, connection });
       store.connections.updateTokens(connection.id, {
         accessTokenEnc: box.encrypt(t.accessToken),
         // null aqui → COALESCE do store preserva o refresh antigo (rotação
@@ -115,11 +115,20 @@ export function createProxyPipeline({ store, cryptoBox, registry, rateLimit }) {
     const provider = registry.get(providerName);
     const connProviderName = provider?.config.connection_provider || providerName;
     const alias = req.query.account || req.headers["x-zkeys-account"];
+    // Resolve por primeiro segmento do path quando bate com account_key
+    // (ex: /p/meta/178414.../insights → conexão cujo account_key = IG business ID).
+    // Só tenta se houver um path explícito com segmento não-vazio; senão usa default.
+    const pathFirstSeg = (req.params.path && typeof req.params.path === "string")
+      ? req.params.path.split("/").filter(Boolean)[0]
+      : null;
     const connection = !provider
       ? null
       : alias
         ? store.connections.findByAlias(req.zkeys.userId, connProviderName, String(alias))
-        : store.connections.findDefault(req.zkeys.userId, connProviderName);
+        : pathFirstSeg
+          ? (store.connections.findByAccount(req.zkeys.userId, connProviderName, pathFirstSeg)
+              ?? store.connections.findDefault(req.zkeys.userId, connProviderName))
+          : store.connections.findDefault(req.zkeys.userId, connProviderName);
     if (!connection) {
       const owner = provider?.config.connection_provider;
       const label = owner
