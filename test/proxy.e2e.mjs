@@ -80,6 +80,7 @@ const upstream = http.createServer((req, res) => {
     const rec = {
       method: req.method, url: req.url,
       headers: { ...req.headers }, body: Buffer.concat(chunks).toString("utf8"),
+      bodyB64: Buffer.concat(chunks).toString("base64"),  // binário (upload) íntegro
     };
     upstreamSeen.push(rec);
     if (failNextWith401) {
@@ -96,6 +97,12 @@ const upstream = http.createServer((req, res) => {
     if (url.pathname === "/teapot") {
       res.statusCode = 418;
       return res.end("chá");
+    }
+    // Upload resumível (estilo Drive): init devolve Location da sessão.
+    if (url.pathname === "/resumable-init") {
+      res.setHeader("location", `${upstreamBase}/resumable-session?upload_id=abc123`);
+      res.statusCode = 200;
+      return res.end();
     }
     res.setHeader("content-type", "application/json");
     res.setHeader("x-upstream", "sim");
@@ -281,6 +288,49 @@ assert.equal(r7.status, 200);
 assert.equal(await r7.text(), payload, "resposta ecoada chega intacta (stream)");
 assert.equal(upstreamSeen.at(-1).body, payload, "upstream recebeu o body byte a byte");
 ok("(vii) POST body JSON atravessa íntegro (raw antes dos parsers)");
+
+// ── (viii) upload resumível: Location volta, chunk binário atravessa ─────
+// Simula o fluxo do Drive (POST init → Location → PUT chunk): o diagnóstico
+// do incidente mentorias confirmou que o bloqueio era escopo OAuth, não o
+// proxy — este teste fixa o contrato do encaminhamento p/ uploads grandes.
+const init = await fetch(`${base}/p/mock/resumable-init?uploadType=resumable`, {
+  method: "POST",
+  headers: {
+    ...zwt(scoped.token),
+    "content-type": "application/json; charset=UTF-8",
+    "x-upload-content-length": "262144",
+    "x-upload-content-type": "video/mp4",
+  },
+  body: JSON.stringify({ name: "video.mp4", mimeType: "video/mp4" }),
+});
+assert.equal(init.status, 200);
+assert.match(init.headers.get("location") || "", /resumable-session\?upload_id=abc123/,
+  "Location da sessão resumível atravessa pro cliente");
+seen = upstreamSeen.at(-1);
+assert.equal(seen.headers["x-upload-content-type"], "video/mp4");
+assert.equal(seen.headers["x-upload-content-length"], "262144");
+ok("(viii) init resumível: x-upload-* atravessam e Location da sessão volta");
+
+const chunk = crypto.randomBytes(256 * 1024);   // binário cru, não-UTF8-safe
+const put = await fetch(`${base}/p/mock/resumable-session?upload_id=abc123`, {
+  method: "PUT",
+  headers: {
+    ...zwt(scoped.token),
+    "content-type": "video/mp4",
+    "content-range": `bytes 0-${chunk.length - 1}/${chunk.length}`,
+  },
+  body: chunk,
+});
+assert.equal(put.status, 200);
+seen = upstreamSeen.at(-1);
+assert.equal(seen.headers["content-range"], `bytes 0-${chunk.length - 1}/${chunk.length}`,
+  "content-range intacto");
+assert.equal(Number(seen.headers["content-length"]), chunk.length,
+  "content-length recalculado do Buffer");
+assert.equal(seen.headers.authorization, "Bearer at-refresh-2",
+  "Bearer real no chunk (token atual pós-refresh)");
+assert.equal(seen.bodyB64, chunk.toString("base64"), "binário byte a byte");
+ok("(viii) chunk resumível: binário íntegro + content-range/content-length corretos");
 
 // ── (vi) zwt_ revogado → 401 ─────────────────────────────────────────────
 assert.ok(store.workspaceTokens.revoke(admin.id, scoped.id));

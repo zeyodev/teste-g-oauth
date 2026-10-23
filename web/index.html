@@ -375,10 +375,17 @@ function renderPacks() {
 
 async function loadConnections() {
   const conns = await (await api("/connections")).json();
+  // Escopos de dados (ignora identidade) todos .readonly → conexão só lê.
+  // Compartilhar a pasta como editor não amplia escopo do token (OAuth) —
+  // badge deixa isso visível sem abrir o console.
+  const readonly = (c) => {
+    const data = (c.scopes || []).filter((s) => !/^(openid|email|profile)$/.test(s));
+    return data.length > 0 && data.every((s) => s.endsWith(".readonly"));
+  };
   $("conns-empty").hidden = conns.length > 0;
   $("tbl-conns").innerHTML = conns.map(c => `
     <tr>
-      <td>${c.provider}</td>
+      <td>${c.provider}${readonly(c) ? ' <span class="badge" title="escopo OAuth do token é somente leitura — gravação exige reconectar com pack de escrita">somente leitura</span>' : ""}</td>
       <td>${esc(c.alias || c.display_name || c.email || c.account_key)}${
         (c.display_name || c.email) ? `<br><span class="muted" style="font-size:.85em">${esc(c.account_key)}</span>` : ""}${
         c.metadata?.phone_number_id ? `<br><span class="muted" style="font-size:.85em">☎ ${esc(c.metadata.display_phone_number || c.metadata.phone_number_id)} · id ${esc(c.metadata.phone_number_id)}</span>` : ""}</td>
