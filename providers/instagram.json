@@ -3,7 +3,7 @@
   "displayName": "Instagram (login direto)",
   "icon": "instagram.svg",
   "authorize_url": "https://www.facebook.com/v22.0/dialog/oauth",
-  "token_url": "https://graph.facebook.com/v22.0/oauth/access_token",
+  "token_url": "https://api.instagram.com/oauth/access_token",
   "revoke_url": "https://graph.facebook.com/v22.0/me/permissions",
   "revoke_method": "DELETE",
   "profile_url": "https://graph.instagram.com/v22.0/me",
@@ -21,16 +21,16 @@
     "config_id": "INSTAGRAM_APP_CONFIG"
   },
   "long_lived_exchange": {
-    "url": "https://graph.facebook.com/v22.0/oauth/access_token",
-    "grant_type": "fb_exchange_token",
-    "token_param": "fb_exchange_token",
-    "send_client_id": true
+    "url": "https://graph.instagram.com/access_token",
+    "grant_type": "ig_exchange_token",
+    "token_param": "access_token",
+    "send_client_id": false
   },
   "self_refresh": {
-    "url": "https://graph.facebook.com/v22.0/oauth/access_token",
-    "grant_type": "fb_exchange_token",
-    "token_param": "fb_exchange_token",
-    "send_client_id": true
+    "url": "https://graph.instagram.com/refresh_access_token",
+    "grant_type": "ig_refresh_token",
+    "token_param": "access_token",
+    "send_client_id": false
   },
   "packs": {
     "manage": {

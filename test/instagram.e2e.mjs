@@ -38,7 +38,6 @@ const IG_USER_ID = "17841400000000001"; // user_id (IGSID) da conta profissional
 const IG_USERNAME = "marquinhos.duo";
 const SHORT_TOKEN = "ig-short-token";
 const LONG_TOKEN = "ig-long-token";
-
 // ── mock Graph ─────────────────────────────────────────────────────────────
 const seen = { subscriptions: null };
 const mock = http.createServer((req, res) => {
@@ -49,7 +48,8 @@ const mock = http.createServer((req, res) => {
     return json({ access_token: SHORT_TOKEN, token_type: "bearer" });
   }
   if (req.method === "GET" && url.pathname === "/oauth/access_token"
-      && url.searchParams.get("grant_type") === "fb_exchange_token") {
+      && url.searchParams.get("grant_type") === "ig_exchange_token") {
+    seen.exchangeClientSecret = url.searchParams.get("client_secret");
     return json({ access_token: LONG_TOKEN, token_type: "bearer", expires_in: 5184000 });
   }
   if (req.method === "GET" && url.pathname === "/me") {
@@ -100,12 +100,12 @@ fs.writeFileSync(path.join(process.env.ZKEYS_PROVIDERS_DIR, "instagram.json"), J
   client_id_env: "INSTAGRAM_APP_ID", client_secret_env: "INSTAGRAM_APP_SECRET",
   webhook_verify_token_env: "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
   long_lived_exchange: {
-    url: `${mockBase}/oauth/access_token`, grant_type: "fb_exchange_token",
-    token_param: "fb_exchange_token", send_client_id: true,
+    url: `${mockBase}/oauth/access_token`, grant_type: "ig_exchange_token",
+    token_param: "access_token", send_client_id: false,
   },
   self_refresh: {
-    url: `${mockBase}/oauth/access_token`, grant_type: "fb_exchange_token",
-    token_param: "fb_exchange_token", send_client_id: true,
+    url: `${mockBase}/oauth/access_token`, grant_type: "ig_refresh_token",
+    token_param: "access_token", send_client_id: false,
   },
   packs: { manage: { label: "Gerenciar", scopes: ["instagram_business_basic"] } },
   extensions: ["graph_webhook"],
@@ -149,6 +149,7 @@ ok("callback → 200 (Conectado)");
 
 const conns = await (await fetch(`${base}/connections`, { headers: { cookie } })).json();
 assert.equal(conns.length, 1);
+assert.equal(seen.exchangeClientSecret, APP_SECRET, "ig_exchange_token usa client_secret");
 assert.equal(conns[0].account_key, IG_USER_ID, "account_key = user_id (roteável por entry.id)");
 assert.equal(conns[0].display_name, IG_USERNAME, "display_name = username");
 assert.ok(!JSON.stringify(conns).includes(LONG_TOKEN), "token NÃO vaza na listagem");
