@@ -92,7 +92,9 @@ export default class OAuth2Provider {
     // Embedded Signup (WhatsApp/Meta/Instagram): config_id dirige as permissões
     // e substitui `scope` — se há config_id nos extras (estático ou do pack),
     // NÃO mandamos scope (evita conflito e URL mais limpa).
-    const scope = (scopes || []).join(" ");
+    // Separador de scopes configurável: dialog do Instagram usa vírgula
+    // (scope_separator no provider json); o resto usa espaço (padrão OAuth).
+    const scope = (scopes || []).join(this.config.scope_separator || " ");
     const hasConfigId = "config_id" in this.authorizeExtra ||
                         "config_id" in extra;
     if (scope && !hasConfigId) params.set("scope", scope);

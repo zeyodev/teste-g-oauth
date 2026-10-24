@@ -2,7 +2,8 @@
   "name": "instagram",
   "displayName": "Instagram (login direto)",
   "icon": "instagram.svg",
-  "authorize_url": "https://www.facebook.com/v22.0/dialog/oauth",
+  "authorize_url": "https://www.instagram.com/oauth/authorize",
+  "scope_separator": ",",
   "token_url": "https://api.instagram.com/oauth/access_token",
   "revoke_url": "https://graph.facebook.com/v22.0/me/permissions",
   "revoke_method": "DELETE",
@@ -17,9 +18,6 @@
   "client_id_env": "INSTAGRAM_APP_ID",
   "client_secret_env": "INSTAGRAM_APP_SECRET",
   "webhook_verify_token_env": "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
-  "authorize_extra_env": {
-    "config_id": "INSTAGRAM_APP_CONFIG"
-  },
   "long_lived_exchange": {
     "url": "https://graph.instagram.com/access_token",
     "grant_type": "ig_exchange_token",

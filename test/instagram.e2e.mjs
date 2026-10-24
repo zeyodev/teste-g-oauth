@@ -138,10 +138,17 @@ const login = await fetch(`${base}/auth/login`, {
 });
 const cookie = login.headers.get("set-cookie").split(";")[0];
 
-// ── (A) callback → connection com account_key = user_id ───────────────────
+// ── (A) authorize URL do dialog Instagram (sem config_id) ─────────────────
 const start = await fetch(`${base}/auth/instagram/start?pack=manage`, { headers: { cookie }, redirect: "manual" });
 assert.equal(start.status, 302);
-const state = new URL(start.headers.get("location")).searchParams.get("state");
+const startUrl = new URL(start.headers.get("location"));
+assert.ok(/instagram\.com$/.test(startUrl.hostname), "dialog no domínio do Instagram");
+assert.equal(startUrl.searchParams.get("config_id"), null, "dialog IG NÃO manda config_id");
+assert.equal(startUrl.searchParams.get("scope"), "instagram_business_basic", "scope direto (vírgula quando >1)");
+ok("start → dialog instagram.com/oauth/authorize + scope, sem config_id");
+
+// ── (B) callback → connection com account_key = user_id ──────────────
+const state = startUrl.searchParams.get("state");
 const cb = await fetch(`${base}/auth/instagram/callback?code=abc&state=${state}`, { headers: { cookie } });
 assert.equal(cb.status, 200);
 assert.match(await cb.text(), /Conectado/);
