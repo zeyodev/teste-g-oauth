@@ -1,16 +1,12 @@
 {
   "name": "instagram",
-  "displayName": "Instagram (login direto)",
+  "displayName": "Instagram (Unified Login)",
   "icon": "instagram.svg",
-  "authorize_url": "https://www.instagram.com/oauth/authorize",
-  "scope_separator": ",",
-  "token_url": "https://api.instagram.com/oauth/access_token",
-  "revoke_url": "https://graph.facebook.com/v22.0/me/permissions",
+  "authorize_url": "https://www.facebook.com/v23.0/dialog/oauth",
+  "token_url": "https://graph.facebook.com/v23.0/oauth/access_token",
+  "revoke_url": "https://graph.facebook.com/v23.0/me/permissions",
   "revoke_method": "DELETE",
-  "profile_url": "https://graph.instagram.com/v22.0/me",
-  "profile_url_params": { "fields": "user_id,username,name" },
-  "profile_map": { "externalId": "user_id", "name": "username" },
-  "api_base_url": "https://graph.instagram.com",
+  "api_base_url": "https://graph.facebook.com/v23.0",
   "auth_injection": { "kind": "query", "param": "access_token" },
   "sign": "appsecret_proof",
   "pkce": false,
@@ -18,28 +14,21 @@
   "client_id_env": "INSTAGRAM_APP_ID",
   "client_secret_env": "INSTAGRAM_APP_SECRET",
   "webhook_verify_token_env": "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
-  "long_lived_exchange": {
-    "url": "https://graph.instagram.com/access_token",
-    "grant_type": "ig_exchange_token",
-    "token_param": "access_token",
-    "send_client_id": false
+  "authorize_extra_env": {
+    "config_id": "INSTAGRAM_APP_CONFIG"
   },
-  "self_refresh": {
-    "url": "https://graph.instagram.com/refresh_access_token",
-    "grant_type": "ig_refresh_token",
-    "token_param": "access_token",
-    "send_client_id": false
-  },
+  "account_discovery": { "kind": "unified_instagram" },
   "packs": {
     "manage": {
       "label": "Gerenciar Instagram",
-      "description": "Ler perfil/mídia, publicar, comentários e mensagens diretas.",
+      "description": "DM, comentários, publicação e insights (Unified Login: config_id dirige as permissões; scopes abaixo são fallback/catálogo).",
       "scopes": [
-        "instagram_business_basic",
-        "instagram_business_manage_messages",
-        "instagram_business_manage_comments",
-        "instagram_business_content_publish",
-        "instagram_business_manage_insights"
+        "instagram_basic",
+        "instagram_manage_messages",
+        "instagram_manage_comments",
+        "instagram_content_publish",
+        "instagram_manage_insights",
+        "business_management"
       ]
     }
   },

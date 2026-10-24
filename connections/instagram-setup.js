@@ -32,7 +32,7 @@ const DEFAULT_FIELDS = [
   "mentions",
 ].join(",");
 
-export function createInstagramSetupRoutes({ store, registry }) {
+export function createInstagramSetupRoutes({ store, cryptoBox, registry }) {
   const router = express.Router();
   const instagram = registry.get("instagram");
 
@@ -55,12 +55,12 @@ export function createInstagramSetupRoutes({ store, registry }) {
     const all = store.connections
       .listByUser(req.zkeysUserId)
       .filter((c) => c.provider === "instagram");
-    if (all.length === 1) return all[0];
-    return {
-      error: all.length === 0
-        ? { status: 404, message: "nenhuma connection instagram — conecte a conta no zkeys primeiro" }
-        : { status: 409, message: `usuário tem ${all.length} connections instagram — informe account_key` },
-    };
+    if (all.length === 0) return null;
+    if (all.length > 1) {
+      return { error: { status: 409, message: `usuário tem ${all.length} connections instagram — informe account_key` } };
+    }
+    // listByUser projeta sem as colunas cifradas — row completa pra decifrar.
+    return store.connections.findById(all[0].id);
   }
 
   // GET /auth/instagram/webhook-status — estado da assinatura app-level + connections.
@@ -68,11 +68,12 @@ export function createInstagramSetupRoutes({ store, registry }) {
     if (!instagram) return res.status(500).json({ error: "provider instagram não carregado" });
     const appId = instagram.clientId;
     const appToken = `${appId}|${instagram.clientSecret}`;
+    const apiBase = instagram.config.api_base_url || "https://graph.facebook.com/v23.0";
 
     const result = { app_subscribed: false, verify_token_configured: Boolean(instagram.webhookVerifyToken), details: {} };
     try {
       const subResp = await fetch(
-        `${instagram.config.api_base_url || "https://graph.facebook.com/v23.0"}/${appId}/subscriptions?access_token=${encodeURIComponent(appToken)}`
+        `${apiBase}/${appId}/subscriptions?access_token=${encodeURIComponent(appToken)}`
       );
       const subData = await subResp.json();
       result.details.app_subscriptions = subData;
@@ -97,6 +98,7 @@ export function createInstagramSetupRoutes({ store, registry }) {
         display_name: c.display_name,
         email: c.email,
         forward_url: c.webhook_forward_url || null,
+        metadata: (() => { try { return JSON.parse(c.metadata_json || "null"); } catch { return null; } })(),
       }));
 
     res.json(result);
@@ -123,6 +125,15 @@ export function createInstagramSetupRoutes({ store, registry }) {
 
     const result = { steps: {}, account_key: conn.account_key };
 
+    const apiBase = instagram.config.api_base_url || "https://graph.facebook.com/v23.0";
+    let userToken;
+    try {
+      const box = cryptoBox.openConnection(conn);
+      userToken = box.decrypt(conn.access_token_enc);
+    } catch (e) {
+      return res.status(500).json({ error: `falha ao decifrar token do usuário: ${e.message}` });
+    }
+
     // Passo 1: App-level subscription (object=instagram; idempotente no Meta).
     if (!verifyToken) {
       result.steps.app_subscription = {
@@ -131,7 +142,7 @@ export function createInstagramSetupRoutes({ store, registry }) {
       };
     } else {
       try {
-        const subUrl = new URL(`${instagram.config.api_base_url || "https://graph.facebook.com/v23.0"}/${appId}/subscriptions`);
+        const subUrl = new URL(`${apiBase}/${appId}/subscriptions`);
         subUrl.searchParams.set("object", "instagram");
         subUrl.searchParams.set("callback_url", callbackUrl);
         subUrl.searchParams.set("fields", fieldList);
@@ -153,7 +164,28 @@ export function createInstagramSetupRoutes({ store, registry }) {
       }
     }
 
-    // Passo 2: forward_url da org (roteamento dos eventos, graph_webhook.js).
+    // Passo 2: Inscrição da CONTA IG no app (docs Unified Login: "subscribe
+    // each of their Instagram accounts to your app") — POST /{ig-id}/subscribed_apps
+    // com o token do usuário (SUAT). Idempotente no Meta.
+    try {
+      const acctUrl = `${apiBase}/${encodeURIComponent(String(conn.account_key))}/subscribed_apps`;
+      const acctResp = await fetch(acctUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userToken}` },
+      });
+      const acctData = await acctResp.json().catch(() => ({}));
+      result.steps.account_subscription = { ok: acctResp.ok, status: acctResp.status, data: acctData };
+
+      store.audit("instagram.setup.account-subscription", {
+        userId: req.zkeysUserId,
+        provider: "instagram",
+        detail: `account=${conn.account_key} HTTP ${acctResp.status}: ${JSON.stringify(acctData).slice(0, 200)}`,
+      });
+    } catch (e) {
+      result.steps.account_subscription = { ok: false, error: e.message };
+    }
+
+    // Passo 3: forward_url da org (roteamento dos eventos, graph_webhook.js).
     if (forward_url) {
       try {
         store.connections.setWebhookForwardUrl(conn.id, String(forward_url));

@@ -378,9 +378,55 @@ export default class OAuth2Provider {
     const cfg = this._discoveryConfig(packId);
     if (!cfg) return null;                          // provider/pack sem descoberta
     if (cfg.kind === "instagram") return this._discoverInstagramPages(accessToken);
+    if (cfg.kind === "unified_instagram") return this._discoverUnifiedInstagramAccounts(accessToken);
     // WhatsApp e futuros: fallback singular (compatibilidade)
     const one = await this.discoverAccount(accessToken);
     return one ? [one] : null;
+  }
+
+  // Unified Login (docs Meta: get-started#instagram-account-ids): o token é um
+  // SUAT do business portfolio — /me NÃO retorna a conta IG. Descoberta:
+  //   GET /me?fields=client_business_id  → business id do cliente (metadado)
+  //   GET /me/assigned_instagram_accounts?fields=id,username → contas IG
+  // Todas as conexões compartilham o MESMO SUAT (cobre os assets compartilhados).
+  async _discoverUnifiedInstagramAccounts(accessToken) {
+    const meUrl = new URL(`${this.config.api_base_url}/me`);
+    meUrl.searchParams.set("fields", "client_business_id");
+    meUrl.searchParams.set("access_token", accessToken);
+    if (this.config.sign === "appsecret_proof") {
+      meUrl.searchParams.set("appsecret_proof", this._appsecretProof(accessToken));
+    }
+    let businessId = null;
+    try {
+      const me = await this._graphGet(meUrl, "me(client_business_id)");
+      businessId = me?.client_business_id || null;
+    } catch (e) {
+      console.warn(`[zkeys/${this.name}] client_business_id indisponível:`, e.message);
+    }
+
+    const url = new URL(`${this.config.api_base_url}/me/assigned_instagram_accounts`);
+    url.searchParams.set("fields", "id,username");
+    url.searchParams.set("access_token", accessToken);
+    if (this.config.sign === "appsecret_proof") {
+      url.searchParams.set("appsecret_proof", this._appsecretProof(accessToken));
+    }
+    const data = await this._graphGet(url, "assigned_instagram_accounts");
+    const out = [];
+    for (const acct of (data?.data || [])) {
+      if (!acct?.id) continue;
+      out.push({
+        externalId: String(acct.id),          // Instagram professional account ID = entry.id do webhook
+        name: acct.username || null,
+        metadata: {
+          client_business_id: businessId,
+          ig_username: acct.username || null,
+          login: "unified",
+        },
+        accessToken,                          // SUAT cobre todos os assets compartilhados
+        expiresIn: null,                      // vencimento depende da Configuration; gestão via BISU Token API
+      });
+    }
+    return out;
   }
 
   // GET /me/accounts → filtra páginas com instagram_business_account → troca

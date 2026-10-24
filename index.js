@@ -70,7 +70,7 @@ export function createApp(config) {
   app.use(createAuthRoutes({ store, passwords, sessions, rateLimit: loginLimiter, csrf, registerMode: config.registerMode }));
   app.use(createWorkspaceTokenRoutes({ store, sessions, csrf }));
   app.use(createWhatsAppSetupRoutes({ store, cryptoBox, registry }));
-  app.use(createInstagramSetupRoutes({ store, registry }));
+  app.use(createInstagramSetupRoutes({ store, cryptoBox, registry }));
   app.use(createConnectionRoutes({
     store, cryptoBox, registry, sessions, csrf,
     stateTtlSeconds: config.stateTtlSeconds,

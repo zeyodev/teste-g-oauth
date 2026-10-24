@@ -39,7 +39,7 @@ const IG_USERNAME = "marquinhos.duo";
 const SHORT_TOKEN = "ig-short-token";
 const LONG_TOKEN = "ig-long-token";
 // ── mock Graph ─────────────────────────────────────────────────────────────
-const seen = { subscriptions: null };
+const seen = { subscriptions: null, proofOnAccounts: null, accountSubscribed: false, accountSubscribedAuth: null };
 const mock = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
   const json = (o) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
@@ -47,13 +47,12 @@ const mock = http.createServer((req, res) => {
   if (req.method === "POST" && url.pathname === "/token") {
     return json({ access_token: SHORT_TOKEN, token_type: "bearer" });
   }
-  if (req.method === "GET" && url.pathname === "/oauth/access_token"
-      && url.searchParams.get("grant_type") === "ig_exchange_token") {
-    seen.exchangeClientSecret = url.searchParams.get("client_secret");
-    return json({ access_token: LONG_TOKEN, token_type: "bearer", expires_in: 5184000 });
+  if (req.method === "GET" && url.pathname === "/me" && url.searchParams.get("fields") === "client_business_id") {
+    return json({ client_business_id: "BIZ_777", id: "suat-system-user-id" });
   }
-  if (req.method === "GET" && url.pathname === "/me") {
-    return json({ user_id: IG_USER_ID, username: IG_USERNAME, name: "Maurício" });
+  if (req.method === "GET" && url.pathname === "/me/assigned_instagram_accounts") {
+    seen.proofOnAccounts = url.searchParams.get("appsecret_proof");
+    return json({ data: [{ id: IG_USER_ID, username: IG_USERNAME }] });
   }
   if (req.method === "POST" && url.pathname === `/${APP_ID}/subscriptions`) {
     seen.subscriptions = Object.fromEntries(url.searchParams);
@@ -64,6 +63,11 @@ const mock = http.createServer((req, res) => {
       { object: "instagram", callback_url: seen.subscriptions?.callback_url, active: true,
         fields: (seen.subscriptions?.fields || "").split(",").filter(Boolean).map((name) => ({ name })) },
     ] });
+  }
+  if (req.method === "POST" && url.pathname === `/${IG_USER_ID}/subscribed_apps`) {
+    seen.accountSubscribed = true;
+    seen.accountSubscribedAuth = req.headers.authorization;
+    return json({ success: true });
   }
   res.statusCode = 404; res.end();
 });
@@ -89,27 +93,20 @@ const orgBase = `http://localhost:${orgServer.address().port}`;
 // ── app zkeys com provider instagram-like (mesma forma do instagram.json) ──
 fs.mkdirSync(process.env.ZKEYS_PROVIDERS_DIR, { recursive: true });
 fs.writeFileSync(path.join(process.env.ZKEYS_PROVIDERS_DIR, "instagram.json"), JSON.stringify({
-  name: "instagram", displayName: "Instagram",
+  name: "instagram", displayName: "Instagram (Unified Login)",
   authorize_url: `${mockBase}/authorize`, token_url: `${mockBase}/token`,
-  profile_url: `${mockBase}/me`, profile_url_params: { fields: "user_id,username,name" },
-  profile_map: { externalId: "user_id", name: "username" },
   api_base_url: mockBase,
   auth_injection: { kind: "query", param: "access_token" },
   sign: "appsecret_proof",
   pkce: false, auth_token_in_header: false,
   client_id_env: "INSTAGRAM_APP_ID", client_secret_env: "INSTAGRAM_APP_SECRET",
   webhook_verify_token_env: "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
-  long_lived_exchange: {
-    url: `${mockBase}/oauth/access_token`, grant_type: "ig_exchange_token",
-    token_param: "access_token", send_client_id: false,
-  },
-  self_refresh: {
-    url: `${mockBase}/oauth/access_token`, grant_type: "ig_refresh_token",
-    token_param: "access_token", send_client_id: false,
-  },
-  packs: { manage: { label: "Gerenciar", scopes: ["instagram_business_basic"] } },
+  authorize_extra_env: { config_id: "INSTAGRAM_APP_CONFIG" },
+  account_discovery: { kind: "unified_instagram" },
+  packs: { manage: { label: "Gerenciar", scopes: ["instagram_basic"] } },
   extensions: ["graph_webhook"],
 }));
+process.env.INSTAGRAM_APP_CONFIG = "ig-config-123";
 
 const { loadConfig } = await import("../config.js");
 const { createApp } = await import("../index.js");
@@ -142,10 +139,10 @@ const cookie = login.headers.get("set-cookie").split(";")[0];
 const start = await fetch(`${base}/auth/instagram/start?pack=manage`, { headers: { cookie }, redirect: "manual" });
 assert.equal(start.status, 302);
 const startUrl = new URL(start.headers.get("location"));
-assert.equal(startUrl.pathname, "/authorize", "endpoint de authorize do provider (dialog IG em prod)");
-assert.equal(startUrl.searchParams.get("config_id"), null, "dialog IG NÃO manda config_id");
-assert.equal(startUrl.searchParams.get("scope"), "instagram_business_basic", "scope direto (vírgula quando >1)");
-ok("start → dialog instagram.com/oauth/authorize + scope, sem config_id");
+assert.equal(startUrl.pathname, "/authorize", "endpoint de authorize do provider (dialog FB em prod)");
+assert.equal(startUrl.searchParams.get("config_id"), "ig-config-123", "config_id dirige as permissões");
+assert.equal(startUrl.searchParams.get("scope"), null, "com config_id NÃO vai scope na URL");
+ok("start → dialog com config_id, sem scope");
 
 // ── (B) callback → connection com account_key = user_id ──────────────
 const state = startUrl.searchParams.get("state");
@@ -156,9 +153,12 @@ ok("callback → 200 (Conectado)");
 
 const conns = await (await fetch(`${base}/connections`, { headers: { cookie } })).json();
 assert.equal(conns.length, 1);
-assert.equal(seen.exchangeClientSecret, APP_SECRET, "ig_exchange_token usa client_secret");
-assert.equal(conns[0].account_key, IG_USER_ID, "account_key = user_id (roteável por entry.id)");
+assert.equal(conns[0].account_key, IG_USER_ID, "account_key = id da conta IG (roteável por entry.id)");
 assert.equal(conns[0].display_name, IG_USERNAME, "display_name = username");
+assert.equal(conns[0].metadata.client_business_id, "BIZ_777", "metadata.client_business_id");
+assert.equal(conns[0].expires_at, null, "SUAT sem expires_in → sem expiração registrada");
+const expectedProof = crypto.createHmac("sha256", APP_SECRET).update(SHORT_TOKEN).digest("hex");
+assert.equal(seen.proofOnAccounts, expectedProof, "appsecret_proof no assigned_instagram_accounts");
 assert.ok(!JSON.stringify(conns).includes(LONG_TOKEN), "token NÃO vaza na listagem");
 ok("connection com account_key=user_id + username");
 
@@ -187,7 +187,9 @@ assert.equal(seen.subscriptions.object, "instagram", "object=instagram");
 assert.equal(seen.subscriptions.verify_token, VERIFY_TOKEN, "verify_token do env no subscribe");
 assert.ok(seen.subscriptions.callback_url.includes("/auth/instagram/webhook"), "callback_url do receiver");
 assert.equal(seen.subscriptions.access_token, `${APP_ID}|${APP_SECRET}`, "subscribe usa app access token");
-ok("setup-webhook: assina app-level + grava forward_url");
+assert.equal(seen.accountSubscribed, true, "conta IG inscrita no app (subscribed_apps)");
+assert.equal(seen.accountSubscribedAuth, `Bearer ${SHORT_TOKEN}`, "inscrição da conta usa o token do usuário");
+ok("setup-webhook: app-level + subscribed_apps da conta + forward_url");
 
 const status = await (await fetch(`${base}/auth/instagram/webhook-status`, {
   headers: { authorization: `Bearer ${wt.token}` },
