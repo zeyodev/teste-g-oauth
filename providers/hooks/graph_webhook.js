@@ -35,14 +35,32 @@ function validSignature(appSecret, rawBody, header) {
   return safeEqual(sig, expected);
 }
 
-// Extrai WABA IDs dos entries do webhook. O Meta manda:
+// Extrai WABA IDs dos entries do webhook WhatsApp Cloud API:
 // { object: "whatsapp_business_account", entry: [{ id: "<waba_id>", changes: [...] }] }
-function extractWabaIds(body) {
-  const ids = new Set();
+
+// Roteamento por provider (entry.id → connections com forward_url):
+//   whatsapp_business_account → entry.id = waba_id (account_key da conexão)
+//   instagram → entry.id = id da conta IG (user_id de graph.instagram.com/me =
+//               account_key da conexão — mesmo par id/conta do WhatsApp)
+function forwardToSubscribedOrgs(store, providerName, body) {
+  if (!store) return;
   for (const entry of (body?.entry || [])) {
-    if (entry.id) ids.add(String(entry.id));
+    const id = entry?.id;
+    if (!id) continue;
+    const conns = providerName === "whatsapp"
+      ? store.connections.findByWabaId(id)
+      : store.connections.findByInstagramId(id);
+    for (const conn of conns) {
+      if (!conn.webhook_forward_url) continue;
+      forwardToOrg(conn.webhook_forward_url, body, providerName).then((result) => {
+        store.audit("webhook.forward", {
+          userId: conn.user_id,
+          provider: providerName,
+          detail: `id=${id} url=${conn.webhook_forward_url} ${result.ok ? "200" : result.error || result.status}`,
+        });
+      }).catch(() => {}); // swallow — já auditou
+    }
   }
-  return [...ids];
 }
 
 // Encaminha o evento pra uma URL de org (best-effort, 5s timeout, sem retry —
@@ -96,24 +114,8 @@ export default function install(app, provider, { store } = {}) {
     store?.audit("webhook.recv", { provider: provider.name, detail: `${obj} entries=${n}` });
     console.log(`[zkeys/${provider.name}] webhook ${obj} (${n}):`, JSON.stringify(body).slice(0, 500));
 
-    // Roteamento: extrai WABA IDs → acha connections com forward_url → encaminha.
-    const wabaIds = extractWabaIds(body);
-    if (wabaIds.length > 0 && store) {
-      for (const wabaId of wabaIds) {
-        const conns = store.connections.findByWabaId(wabaId);
-        for (const conn of conns) {
-          if (conn.webhook_forward_url) {
-            forwardToOrg(conn.webhook_forward_url, body, provider.name).then((result) => {
-              store.audit("webhook.forward", {
-                userId: conn.user_id,
-                provider: provider.name,
-                detail: `waba=${wabaId} url=${conn.webhook_forward_url} ${result.ok ? "200" : result.error || result.status}`,
-              });
-            }).catch(() => {}); // swallow — já auditou
-          }
-        }
-      }
-    }
+    // Roteamento: entry.id → connections inscritas → encaminha (por provider).
+    forwardToSubscribedOrgs(store, provider.name, body);
 
     // 200 rápido: a Meta reenvia se não receber 2xx em poucos segundos.
     return res.sendStatus(200);
