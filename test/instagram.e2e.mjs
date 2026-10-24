@@ -142,7 +142,7 @@ const cookie = login.headers.get("set-cookie").split(";")[0];
 const start = await fetch(`${base}/auth/instagram/start?pack=manage`, { headers: { cookie }, redirect: "manual" });
 assert.equal(start.status, 302);
 const startUrl = new URL(start.headers.get("location"));
-assert.ok(/instagram\.com$/.test(startUrl.hostname), "dialog no domínio do Instagram");
+assert.equal(startUrl.pathname, "/authorize", "endpoint de authorize do provider (dialog IG em prod)");
 assert.equal(startUrl.searchParams.get("config_id"), null, "dialog IG NÃO manda config_id");
 assert.equal(startUrl.searchParams.get("scope"), "instagram_business_basic", "scope direto (vírgula quando >1)");
 ok("start → dialog instagram.com/oauth/authorize + scope, sem config_id");
