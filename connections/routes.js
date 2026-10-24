@@ -97,14 +97,18 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
       const scopes = tokens.scope ?? provider.packs[st.pack]?.scopes ?? [];
       const userRefreshToken = tokens.refreshToken || tokens.accessToken; // User Token = seed de refresh
 
-      // Descoberta plural (pack-aware): Instagram retorna array de páginas;
-      // WhatsApp cai de volta via discoverAccount singular. Best-effort —
-      // se falhar, cai no profile normal e a conexão ainda é gravada.
-      let discoveredList = null;   // null = sem descoberta; [] = sem páginas IG; [...] = conexões
+      // Descoberta plural (pack-aware): Instagram retorna array de contas;
+      // WhatsApp cai de volta via discoverAccount singular. Unified Login:
+      // falha na descoberta é FATAL (configuração errada) — popup com diagnóstico
+      // em vez de gravar connection quebrada com account_key "default".
+      let discoveredList = null;   // null = sem descoberta; [] = sem contas; [...] = conexões
       try {
         discoveredList = await provider.discoverAccounts?.(tokens.accessToken, st.pack) ?? null;
       } catch (e) {
         console.warn(`[zkeys/${provider.name}] discoverAccounts falhou:`, e.message);
+        if (provider.discoveryKind?.(st.pack) === "unified_instagram") {
+          return res.send(popupHtml({ ok: false, message: e.message }));
+        }
       }
 
       // Helper: persiste UMA conexão cifrada e retorna a row.
@@ -141,13 +145,15 @@ export function createConnectionRoutes({ store, cryptoBox, registry, sessions, c
       };
 
       if (Array.isArray(discoveredList)) {
-        // Instagram: N conexões (uma por página com IG Business Account).
+        // Descoberta plural: N conexões (uma por conta descoberta).
         if (discoveredList.length === 0) {
-          return res.send(popupHtml({
-            ok: false,
-            message: "Nenhuma página com conta Instagram de negócio encontrada. "
-              + "Confira se a página está vinculada a um Instagram Business Account.",
-          }));
+          const msg = provider.discoveryKind?.(st.pack) === "unified_instagram"
+            ? "Login concluído, mas nenhuma conta Instagram foi compartilhada. "
+              + "Confira: (1) a conta é profissional (Business ou Creator)? (2) no login, "
+              + "você selecionou o business portfolio E a conta Instagram (não pule/escolha 'continuar sem compartilhar')?"
+            : "Nenhuma página com conta Instagram de negócio encontrada. "
+              + "Confira se a página está vinculada a um Instagram Business Account.";
+          return res.send(popupHtml({ ok: false, message: msg }));
         }
         for (const d of discoveredList) {
           const isPageToken = d.accessToken != null;

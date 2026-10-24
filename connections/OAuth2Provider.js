@@ -64,6 +64,11 @@ export default class OAuth2Provider {
     return this.config.packs || {};
   }
 
+  // Kind da descoberta do pack (público p/ rotas customizarem mensagens).
+  discoveryKind(packId) {
+    return this._discoveryConfig(packId)?.kind ?? null;
+  }
+
   // Pack-aware discovery config: pack-level account_discovery cai de volta
   // pro provider-level (ex: whatsapp.json declara account_discovery no
   // provider, não no pack). Retorna null se nenhum configurar descoberta.
@@ -397,10 +402,12 @@ export default class OAuth2Provider {
       meUrl.searchParams.set("appsecret_proof", this._appsecretProof(accessToken));
     }
     let businessId = null;
+    let notSuat = null;   // evidência de que o token NÃO é SUAT (Configuration errada)
     try {
       const me = await this._graphGet(meUrl, "me(client_business_id)");
       businessId = me?.client_business_id || null;
     } catch (e) {
+      notSuat = e.message;
       console.warn(`[zkeys/${this.name}] client_business_id indisponível:`, e.message);
     }
 
@@ -425,6 +432,16 @@ export default class OAuth2Provider {
         accessToken,                          // SUAT cobre todos os assets compartilhados
         expiresIn: null,                      // vencimento depende da Configuration; gestão via BISU Token API
       });
+    }
+    if (out.length === 0 && notSuat) {
+      // Fail fast com diagnóstico: sem SUAT não há compartilhamento de assets —
+      // a Configuration (config_id) não é do tipo Unified Login.
+      throw new Error(
+        "Nenhuma conta Instagram compartilhada e o token NÃO é do tipo Unified Login " +
+        "(SUAT). Crie a Configuration em Use cases > Manage messaging & content on " +
+        "Instagram > Customize > API setup with Unified login e use o config_id dela. " +
+        `Detalhe: ${String(notSuat).slice(0, 160)}`
+      );
     }
     return out;
   }
